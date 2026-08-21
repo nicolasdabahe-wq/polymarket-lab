@@ -1,58 +1,59 @@
-from datetime import datetime, timedelta, timezone
-
+"""Casos tomados de posiciones reales (2026-08-21)."""
 from pmbot.scheduler.settlement import decide_settlement
-
-NOW = datetime(2026, 8, 21, 20, 0, tzinfo=timezone.utc)
 
 
 def decide(**kw):
     base = dict(gamma_closed=False, gamma_prices=None, outcome_index=0,
-                onchain_price=None, onchain_redeemable=False,
-                pinned_since=None, now=NOW, confirm_minutes=10)
+                uma_status=None, onchain_price=None, onchain_redeemable=False)
     base.update(kw)
     return decide_settlement(**base)
 
 
 def test_gamma_closed_paga_el_precio_oficial():
-    d = decide(gamma_closed=True, gamma_prices=[0.0, 1.0], outcome_index=1)
-    assert d.payout == 1.0 and d.pinned_since is None
+    assert decide(gamma_closed=True, gamma_prices=[0.0, 1.0],
+                  outcome_index=1).payout == 1.0
 
 
 def test_redimible_onchain_liquida_sin_esperar():
-    d = decide(onchain_price=0.001, onchain_redeemable=True)
-    assert d.payout == 0.0
-    d = decide(onchain_price=1.0, onchain_redeemable=True)
+    assert decide(onchain_price=0.001, onchain_redeemable=True).payout == 0.0
+    assert decide(onchain_price=1.0, onchain_redeemable=True).payout == 1.0
+
+
+def test_fritz_perdido_con_uma_propuesto():
+    # Partido terminado: closed=false, uma='proposed', precio 0.001.
+    d = decide(uma_status="proposed", gamma_prices=[0.0005, 0.9995],
+               outcome_index=0, onchain_price=0.001)
+    assert d.payout == 0.0 and "oráculo" in d.reason
+
+
+def test_brewers_ganado_con_uma_propuesto():
+    # Payout ya cobrado on-chain: la posición no aparece, manda Gamma.
+    d = decide(uma_status="proposed", gamma_prices=[0.0005, 0.9995],
+               outcome_index=1, onchain_price=None)
     assert d.payout == 1.0
 
 
-def test_precio_clavado_primero_marca_y_no_liquida():
-    d = decide(onchain_price=0.001)
-    assert d.payout is None and d.pinned_since == NOW
+def test_mercado_vivo_barato_no_se_liquida():
+    # "¿La Fed baja 50+ bps?" cotiza a 0.003 y vence dentro de un mes:
+    # sin oráculo NO se toca, aunque el precio parezca resuelto.
+    d = decide(uma_status=None, gamma_prices=[0.0025, 0.9975],
+               outcome_index=0, onchain_price=0.003)
+    assert d.payout is None and d.reason == "abierto"
 
 
-def test_precio_clavado_liquida_tras_la_ventana():
-    d = decide(onchain_price=0.001, pinned_since=NOW - timedelta(minutes=11))
-    assert d.payout == 0.0 and "de facto" in d.reason
-    d = decide(onchain_price=0.999, pinned_since=NOW - timedelta(minutes=30))
-    assert d.payout == 1.0
+def test_uma_disputado_no_liquida():
+    assert decide(uma_status="disputed", onchain_price=0.001).payout is None
 
 
-def test_precio_clavado_dentro_de_la_ventana_espera():
-    d = decide(onchain_price=0.999, pinned_since=NOW - timedelta(minutes=4))
-    assert d.payout is None and d.pinned_since == NOW - timedelta(minutes=4)
+def test_uma_propuesto_pero_precio_sin_definir_espera():
+    # Propuesto y aún cotizando 0.60: algo no cuadra, mejor no liquidar.
+    assert decide(uma_status="proposed", onchain_price=0.60).payout is None
 
 
-def test_precio_que_se_despega_borra_la_marca():
-    # Un pico de 0.996 que vuelve a 0.80 no debe liquidar nada.
-    d = decide(onchain_price=0.80, pinned_since=NOW - timedelta(minutes=30))
-    assert d.payout is None and d.pinned_since is None
-
-
-def test_gamma_es_el_respaldo_cuando_no_hay_onchain():
-    # Modo paper: sin posiciones on-chain, se usa el precio de Gamma.
-    d = decide(gamma_prices=[0.997, 0.003], outcome_index=0,
-               pinned_since=NOW - timedelta(minutes=20))
-    assert d.payout == 1.0
+def test_partido_en_curso_no_se_liquida():
+    d = decide(gamma_prices=[0.355, 0.645], outcome_index=1,
+               onchain_price=0.645)
+    assert d.payout is None
 
 
 def test_sin_datos_no_hace_nada():

@@ -114,42 +114,18 @@ class DailyRoutine:
         return {(r.condition_id, r.outcome_index): (r.cur_price, r.redeemable)
                 for r in rows}
 
-    def _pinned_since(self, key: str) -> datetime | None:
-        row = self.app.conn.execute(
-            "SELECT value FROM paper_state WHERE key = ?", (key,)).fetchone()
-        if not row:
-            return None
-        try:
-            return datetime.fromisoformat(row["value"])
-        except ValueError:
-            return None
-
-    def _save_pinned(self, key: str, value: datetime | None) -> None:
-        with self.app.conn:
-            if value is None:
-                self.app.conn.execute(
-                    "DELETE FROM paper_state WHERE key = ?", (key,))
-            else:
-                self.app.conn.execute(
-                    """INSERT INTO paper_state (key, value) VALUES (?, ?)
-                       ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
-                    (key, value.isoformat()))
-
     async def settle_resolved(self) -> list[str]:
         """Liquida posiciones de mercados ya resueltos.
 
-        No basta con esperar a que Gamma marque closed: la resolución UMA
-        puede tardar horas y en deportes el resultado se sabe al instante.
-        Por eso también se liquida cuando el payout ya es redimible on-chain
-        o cuando el precio quedó clavado en ~0/~1 (ver settlement.py).
+        No basta con esperar a que Gamma marque closed: la resolución tarda
+        horas y en deportes el resultado se sabe al instante. Por eso
+        también cuentan el payout redimible on-chain y el resultado ya
+        propuesto al oráculo (ver settlement.py).
         """
         positions = list(self.app.broker.positions())
         if not positions:
             return []
         onchain = await self._onchain_prices()
-        confirm = float(self.app.cfg.section("scheduler").get(
-            "settle_confirm_minutes", 10))
-        now = datetime.now(timezone.utc)
         settled: list[str] = []
         won = False
         for pos in positions:
@@ -161,16 +137,13 @@ class DailyRoutine:
                 log.warning("status de %s falló: %s", cid[:10], exc)
                 status = None
             price, redeemable = onchain.get((cid, idx), (None, False))
-            key = f"pinned:{cid}:{idx}"
             decision = decide_settlement(
                 gamma_closed=bool(status and status["closed"]),
                 gamma_prices=(status or {}).get("outcome_prices"),
                 outcome_index=idx,
+                uma_status=(status or {}).get("uma_status"),
                 onchain_price=price,
-                onchain_redeemable=redeemable,
-                pinned_since=self._pinned_since(key),
-                now=now, confirm_minutes=confirm)
-            self._save_pinned(key, decision.pinned_since)
+                onchain_redeemable=redeemable)
             if decision.payout is None:
                 continue
             fill = self.app.broker.redeem(
@@ -185,9 +158,11 @@ class DailyRoutine:
             msg = (f"{emoji} Mercado(s) resuelto(s):\n"
                    + "\n".join(f"• {s}" for s in settled))
             if won:
-                # El payout se cobra manualmente: el bot no puede reclamarlo.
-                msg += ("\n\n💵 Cobrá el premio en la app de Polymarket "
-                        "(botón Claim): hasta entonces no vuelve al saldo.")
+                # El premio suele volver solo al saldo; si no, hay que
+                # reclamarlo a mano (el bot no puede hacerlo).
+                msg += ("\n\n💵 El premio vuelve al saldo al liquidarse el "
+                        "mercado; si en un rato no aparece, cobralo con "
+                        "Claim en la app.")
             await self.app.notifier.send(msg)
         return settled
 

@@ -99,10 +99,6 @@ scheduler:
   # Reconciliación con la blockchain (adopta fills tardíos) y liquidación
   # de mercados resueltos.
   reconcile_minutes: 5
-  # Minutos que el precio debe seguir clavado en ~0/~1 para dar un mercado
-  # por resuelto antes de que Gamma lo cierre (la resolución UMA tarda horas;
-  # en deportes el resultado se sabe al instante).
-  settle_confirm_minutes: 10
 
 telegram:
   # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).
