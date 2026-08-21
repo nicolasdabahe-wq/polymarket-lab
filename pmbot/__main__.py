@@ -14,6 +14,7 @@
   python -m pmbot live-check         # verificar conexión/saldo del modo real
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
+  python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -156,6 +157,22 @@ async def cmd_portfolio(app: App) -> None:
               f"{(p['question'] or '')[:50]}")
     if not positions:
         print("  (ninguna)")
+
+
+def cmd_set_baseline(app: App, amount: float) -> None:
+    """Fija el capital inicial de referencia para el PnL.
+
+    El baseline se auto-fija la primera vez que arranca el modo real, pero
+    si en ese momento había posiciones sin registrar queda subvaluado.
+    """
+    with app.conn:
+        app.conn.execute(
+            """INSERT INTO paper_state (key, value)
+               VALUES ('live_starting_equity', ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (str(amount),))
+    print(f"Capital inicial de referencia fijado en ${amount:.2f}. "
+          "El PnL se mide desde ahí.")
 
 
 async def cmd_trades(app: App) -> None:
@@ -347,6 +364,8 @@ def main() -> None:
     sub.add_parser("live-check")
     sub.add_parser("notify-test")
     sub.add_parser("test-trade")
+    p_base = sub.add_parser("set-baseline")
+    p_base.add_argument("amount", type=float)
     sub.add_parser("run")
     args = parser.parse_args()
 
@@ -389,6 +408,8 @@ def main() -> None:
                 await cmd_notify_test(app)
             elif args.command == "test-trade":
                 await cmd_test_trade(app)
+            elif args.command == "set-baseline":
+                cmd_set_baseline(app, args.amount)
             elif args.command == "run":
                 await run_forever(app)
         finally:
