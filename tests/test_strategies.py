@@ -73,9 +73,28 @@ def test_different_outcomes_not_merged():
     assert pick_candidates(signals, SCORES, CFG) == []
 
 
-def test_same_wallet_not_double_counted():
+def test_same_wallet_not_double_counted_for_consensus():
     signals = [sig("0xgood1"), sig("0xgood1")]
     assert pick_candidates(signals, SCORES, CFG) == []
+
+
+def test_split_fills_aggregate_to_strong_trigger():
+    # Una entrada grande llega partida en fills chicos: deben sumarse.
+    signals = [sig("0xstrong", usdc=800, price=0.50),
+               sig("0xstrong", usdc=800, price=0.54),
+               sig("0xstrong", usdc=800, price=0.58)]
+    [cand] = pick_candidates(signals, SCORES, CFG)
+    leader = cand.leader
+    assert leader["usdc"] == pytest.approx(2400)     # >= strong_usdc 2000
+    assert leader["price"] == pytest.approx(0.54)    # promedio ponderado
+
+
+def test_small_fills_aggregate_past_min_size():
+    # Fills individuales bajo el mínimo, pero el total sí califica.
+    signals = [sig("0xgood1", usdc=300), sig("0xgood1", usdc=300),
+               sig("0xgood2", usdc=600)]
+    [cand] = pick_candidates(signals, SCORES, CFG)
+    assert len(cand.wallets) == 2  # consenso alcanzado con totales
 
 
 def test_leader_is_highest_score():

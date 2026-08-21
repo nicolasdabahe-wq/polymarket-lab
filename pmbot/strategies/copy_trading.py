@@ -118,22 +118,36 @@ def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
     grouped: dict[tuple[str, int], CopyCandidate] = {}
     for s in signals:
         score = scores.get(s.get("wallet", ""), 0.0)
-        if (s.get("side") != "BUY" or score < min_score
-                or float(s.get("usdc", 0)) < min_usdc):
+        if s.get("side") != "BUY" or score < min_score:
             continue
+        usdc = float(s.get("usdc", 0))
+        price = float(s.get("price", 0))
         key = (s["condition_id"], int(s.get("outcome_index", 0)))
         cand = grouped.setdefault(key, CopyCandidate(
             condition_id=s["condition_id"],
             outcome_index=int(s.get("outcome_index", 0)),
             outcome=s.get("outcome", ""), title=s.get("title", ""),
             wallets=[]))
-        if all(w["wallet"] != s["wallet"] for w in cand.wallets):
+        existing = next((w for w in cand.wallets
+                         if w["wallet"] == s["wallet"]), None)
+        if existing:
+            # Las órdenes grandes llegan partidas en varios fills: se SUMAN
+            # (precio promedio ponderado) para no subestimar la entrada real.
+            total = existing["usdc"] + usdc
+            if total > 0:
+                existing["price"] = ((existing["price"] * existing["usdc"]
+                                      + price * usdc) / total)
+            existing["usdc"] = total
+        else:
             cand.wallets.append({"wallet": s["wallet"], "score": score,
-                                 "price": float(s.get("price", 0)),
-                                 "usdc": float(s.get("usdc", 0))})
+                                 "price": price, "usdc": usdc})
 
     out = []
     for cand in grouped.values():
+        # El tamaño mínimo se evalúa sobre el TOTAL agregado por wallet.
+        cand.wallets = [w for w in cand.wallets if w["usdc"] >= min_usdc]
+        if not cand.wallets:
+            continue
         leader = cand.leader
         strong_single = (leader["score"] >= strong_score
                          and leader["usdc"] >= strong_usdc)
