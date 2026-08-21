@@ -117,7 +117,8 @@ Pasos que solo vos podés hacer:
      **Export Private Key**.
    - `POLYMARKET_PROXY_ADDRESS` → la dirección `0x…` de tu perfil
      (botón de copiar bajo tu nombre de usuario).
-   - `POLYMARKET_SIGNATURE_TYPE=1` (login por email) o `2` (MetaMask).
+   - `POLYMARKET_SIGNATURE_TYPE=3` (cuentas de la app actual; ver
+     .env.example para cuentas viejas o MetaMask).
    - `LIVE_TRADING=I_UNDERSTAND_THE_RISKS` (exactamente ese texto).
 4. **Verificar sin operar**:
    ```bash
