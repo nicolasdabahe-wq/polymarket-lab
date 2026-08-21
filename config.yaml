@@ -32,7 +32,7 @@ smart_money:
     min_distinct_markets: 5 # descarta "one-trick ponies" / posibles insiders
     min_account_age_days: 15  # permite rachas recientes (con 30 se escapaban)
   # Cuántas wallets del ranking final monitorear de cerca.
-  top_n: 20
+  top_n: 40
   # Máximo de posiciones a listar por wallet.
   positions_per_wallet: 25
   # Validación automática por backtest: decide a quién SÍ conviene copiar.
@@ -46,7 +46,7 @@ smart_money:
     thresholds: [150, 300, 500, 1000, 2000]
     min_roi: 0.0            # habilita si copiarla habría dado >= 0%
     min_copies: 5           # muestra mínima para dar veredicto
-    max_wallets_per_run: 20
+    max_wallets_per_run: 40
     revalidate_hours: 24
 
 intel:
@@ -122,9 +122,11 @@ strategies:
   copy_trading:
     enabled: true
     budget_pct: 0.50
-    base_pct_per_trade: 0.06  # tamaño base por copia (fracción del equity)
+    # Con muchas wallets habilitadas conviene tamaño menor por copia: así
+    # entran más apuestas simultáneas antes de topar la exposición máxima.
+    base_pct_per_trade: 0.045
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
-    min_wallet_score: 0.38
+    min_wallet_score: 0.22
     min_copy_usdc_of_wallet: 150   # ignorar trades chicos de la wallet
     # Score a partir del cual se copia aunque el backtest aún no la validó.
     trust_without_backtest: 0.60
