@@ -26,6 +26,9 @@ class Config:
     anthropic_api_key: str | None
     telegram_bot_token: str | None
     telegram_chat_id: str | None
+    polymarket_private_key: str | None
+    polymarket_proxy_address: str | None
+    polymarket_signature_type: int
 
     def section(self, name: str) -> dict[str, Any]:
         value = self.raw.get(name) or {}
@@ -63,4 +66,10 @@ def load_config(config_path: str | Path | None = None) -> Config:
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        polymarket_private_key=os.environ.get("POLYMARKET_PRIVATE_KEY") or None,
+        polymarket_proxy_address=os.environ.get("POLYMARKET_PROXY_ADDRESS") or None,
+        # 1 = cuenta con login por email/Magic (lo usual); 2 = browser wallet
+        # con proxy de Polymarket; 0 = EOA directa.
+        polymarket_signature_type=int(
+            os.environ.get("POLYMARKET_SIGNATURE_TYPE") or 1),
     )

@@ -135,17 +135,44 @@ class GammaClient:
     async def market_status(self, condition_id: str) -> dict[str, Any] | None:
         """Estado actual de un mercado puntual (para liquidar posiciones):
         {'closed': bool, 'outcome_prices': [float, ...]} o None si no existe."""
-        rows = await self.http.get_json(
-            f"{GAMMA_BASE}/markets", params={"condition_ids": condition_id})
-        if not rows:
-            return None
-        m = rows[0]
-        try:
-            prices = [float(p) for p in json.loads(m.get("outcomePrices") or "[]")]
-        except (ValueError, TypeError):
-            prices = []
-        return {"closed": bool(m.get("closed")), "outcome_prices": prices,
-                "uma_status": m.get("umaResolutionStatus")}
+        result = await self.market_statuses([condition_id])
+        return result.get(condition_id)
+
+    async def market_statuses(self, condition_ids: list[str],
+                              batch_size: int = 20) -> dict[str, dict[str, Any]]:
+        """Estado de varios mercados en lotes (la API acepta el parámetro
+        condition_ids repetido).
+
+        OJO: algunos mercados cerrados no aparecen sin closed=true explícito,
+        así que los que falten se re-consultan con ese flag."""
+        out: dict[str, dict[str, Any]] = {}
+
+        async def fetch(batch: list[str], closed_flag: bool) -> None:
+            params: list[tuple[str, str]] = [("condition_ids", c) for c in batch]
+            if closed_flag:
+                params.append(("closed", "true"))
+            rows = await self.http.get_json(f"{GAMMA_BASE}/markets",
+                                            params=params)
+            for m in rows or []:
+                cid = m.get("conditionId")
+                if not cid:
+                    continue
+                try:
+                    prices = [float(p) for p in
+                              json.loads(m.get("outcomePrices") or "[]")]
+                except (ValueError, TypeError):
+                    prices = []
+                out[cid] = {"closed": bool(m.get("closed")),
+                            "outcome_prices": prices,
+                            "uma_status": m.get("umaResolutionStatus"),
+                            "question": m.get("question", "")}
+
+        for i in range(0, len(condition_ids), batch_size):
+            await fetch(condition_ids[i:i + batch_size], closed_flag=False)
+        missing = [c for c in condition_ids if c not in out]
+        for i in range(0, len(missing), batch_size):
+            await fetch(missing[i:i + batch_size], closed_flag=True)
+        return out
 
     @staticmethod
     def _flatten(events: list[dict[str, Any]]) -> Iterator[Market]:

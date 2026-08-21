@@ -10,6 +10,8 @@
   python -m pmbot portfolio          # equity, posiciones y PnL por estrategia
   python -m pmbot trades             # últimas órdenes (llenadas y rechazadas)
   python -m pmbot kill on|off        # kill switch manual (bloquea compras)
+  python -m pmbot backtest-wallet W  # qué habría pasado copiando a W (o 'top')
+  python -m pmbot live-check         # verificar conexión/saldo del modo real
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -169,6 +171,48 @@ async def cmd_trades(app: App) -> None:
             print(f"      motivo: {r['reason'][:90]}")
 
 
+async def cmd_live_check(app: App) -> None:
+    from .execution import LiveBroker
+    if not isinstance(app.broker, LiveBroker):
+        print("Modo PAPER activo. Para el modo real: LIVE_TRADING="
+              "I_UNDERSTAND_THE_RISKS + claves de Polymarket en .env")
+        return
+    import asyncio as _asyncio
+    info = await _asyncio.to_thread(app.broker.check_connection)
+    print("\n✅ Conexión al CLOB OK")
+    print(f"   Firmante:  {info['signer_address']}")
+    print(f"   Funder:    {info['funder']}")
+    print(f"   Saldo:     {info['usdc_balance']:.2f} USDC")
+    print(f"   Allowance: {'OK' if info['allowance_ok'] else '⚠️ SIN ALLOWANCE'}")
+    if not info["allowance_ok"]:
+        print("   → Depositá desde la app de Polymarket (configura los "
+              "permisos automáticamente) antes de operar.")
+    positions = await app.data_api.positions(app.broker.proxy_address, limit=20)
+    print(f"   Posiciones on-chain: {len(positions)}")
+    for p in positions[:10]:
+        print(f"     {p.outcome:<4} {p.size:>8.1f} u @ {p.avg_price:.3f} "
+              f"| ${p.current_value:.2f} | {p.title[:45]}")
+
+
+async def cmd_backtest(app: App, wallet: str, days: int, stake: float,
+                       min_copy: float) -> None:
+    from .backtest import CopyBacktester
+    from .backtest.copy_backtest import format_report
+    tester = CopyBacktester(app.data_api, app.gamma)
+    if wallet == "top":
+        rows = app.wallet_scorer.top_wallets(5)
+        if not rows:
+            print("No hay ranking; corré primero: python -m pmbot rank-wallets")
+            return
+        targets = [(r["wallet"], r["username"]) for r in rows]
+    else:
+        targets = [(wallet, "")]
+    for addr, username in targets:
+        report = await tester.run(addr, days=days, stake_usdc=stake,
+                                  min_copy_usdc=min_copy)
+        print("\n" + format_report(report, username))
+
+
 def cmd_kill(app: App, mode: str) -> None:
     if mode == "on":
         app.risk.kill_file.touch()
@@ -194,14 +238,23 @@ def main() -> None:
     sub.add_parser("trades")
     p_kill = sub.add_parser("kill")
     p_kill.add_argument("mode", choices=["on", "off"])
+    p_bt = sub.add_parser("backtest-wallet")
+    p_bt.add_argument("wallet", help="dirección 0x… o 'top' (las 5 mejores)")
+    p_bt.add_argument("--days", type=int, default=90)
+    p_bt.add_argument("--stake", type=float, default=8.0,
+                      help="USDC apostados por copia (default 8 ≈ 3%% de 270)")
+    p_bt.add_argument("--min-copy", type=float, default=500.0,
+                      help="tamaño mínimo del trade de la wallet para copiarlo")
+    sub.add_parser("live-check")
     sub.add_parser("run")
     args = parser.parse_args()
 
     setup_logging()
     cfg = load_config()
     if cfg.live_trading:
-        print("⚠️  LIVE_TRADING activado — pero la fase actual es solo lectura;"
-              " ninguna orden se envía todavía.", file=sys.stderr)
+        print("🔴 MODO REAL ACTIVADO: las órdenes se envían al CLOB con "
+              "dinero real. Kill switch: python -m pmbot kill on",
+              file=sys.stderr)
 
     async def dispatch() -> None:
         app = build_app(cfg)
@@ -226,6 +279,11 @@ def main() -> None:
                 await cmd_trades(app)
             elif args.command == "kill":
                 cmd_kill(app, args.mode)
+            elif args.command == "backtest-wallet":
+                await cmd_backtest(app, args.wallet, args.days, args.stake,
+                                   args.min_copy)
+            elif args.command == "live-check":
+                await cmd_live_check(app)
             elif args.command == "run":
                 await run_forever(app)
         finally:

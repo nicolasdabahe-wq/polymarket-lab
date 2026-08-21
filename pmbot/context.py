@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .config import Config
 from .data import ClobClient, DataApiClient, GammaClient, MarketStore
 from .db import connect
-from .execution import PaperBroker
+from .execution import LiveBroker, PaperBroker
 from .http import HttpClient
 from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
@@ -47,10 +47,19 @@ def build_app(cfg: Config) -> App:
     data_api = DataApiClient(http)
     clob = ClobClient(http)
     risk = RiskManager(conn, cfg.section("risk"), cfg.var_dir)
-    # Fase 2: solo broker paper. El broker real (fase 3) exigirá además
-    # cfg.live_trading y las claves de Polymarket.
-    broker = PaperBroker(conn, clob, risk, cfg.section("capital"),
-                         cfg.section("execution"))
+    if cfg.live_trading:
+        if not (cfg.polymarket_private_key and cfg.polymarket_proxy_address):
+            raise RuntimeError(
+                "LIVE_TRADING está activado pero faltan POLYMARKET_PRIVATE_KEY "
+                "y/o POLYMARKET_PROXY_ADDRESS en .env")
+        broker: PaperBroker = LiveBroker(
+            conn, clob, risk, cfg.section("capital"), cfg.section("execution"),
+            private_key=cfg.polymarket_private_key,
+            proxy_address=cfg.polymarket_proxy_address,
+            signature_type=cfg.polymarket_signature_type)
+    else:
+        broker = PaperBroker(conn, clob, risk, cfg.section("capital"),
+                             cfg.section("execution"))
     strategies_cfg = cfg.section("strategies")
     return App(
         cfg=cfg,

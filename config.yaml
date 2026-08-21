@@ -2,7 +2,9 @@
 
 capital:
   # Capital inicial simulado en modo paper (USDC).
-  paper_starting_usdc: 500.0
+  # 270 ≈ 5.000 MXN: el paper simula exactamente el capital real planeado,
+  # así los resultados son representativos (mínimos de orden incluidos).
+  paper_starting_usdc: 270.0
 
 data:
   # Mercados a cachear por corrida (ordenados por volumen 24h desc).
@@ -89,7 +91,7 @@ strategies:
     enabled: true
     budget_pct: 0.30          # máx fracción del equity en esta estrategia
     min_edge: 0.02            # edge mínimo neto (2%) para entrar
-    max_usdc_per_trade: 40
+    max_usdc_per_trade: 25    # ~10% del capital; risk/ igual re-verifica
     scan_top_markets: 200
   copy_trading:
     enabled: true

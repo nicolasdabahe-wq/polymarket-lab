@@ -11,14 +11,16 @@ paper trading**; el modo real requiere una variable de entorno explícita.
 | `pmbot/smart_money/` | ✅ | Ranking de wallets con score compuesto y filtros anti-insider; snapshot de posiciones; señales por trades nuevos |
 | `pmbot/intel/` | ✅ | 10 feeds RSS configurables, mapeo noticia→mercado (Claude API con fallback por keywords), briefing diario por categoría |
 | `pmbot/risk/` | ✅ | Límites duros: % máx por mercado/categoría/wallet copiada/estrategia, exposición total, stop diario, kill switch. Ninguna orden sale sin pasar por acá |
-| `pmbot/execution/` | ✅ paper | Broker simulado: fills contra el order book real del CLOB (camina niveles → slippage realista), idempotencia por orden, posiciones y PnL en SQLite, redeem al resolver |
+| `pmbot/execution/` | ✅ paper + real | PaperBroker (fills simulados contra books reales) y LiveBroker (órdenes FAK reales vía py-clob-client, saldo USDC real). Misma idempotencia y contabilidad |
 | `pmbot/strategies/` | ✅ arb + copy | Arbitraje YES+NO<1 (verificado contra el CLOB, con unwind si una pata no llena) y copy trading (consenso de wallets o entrada fuerte de una top, límite de slippage, salida cuando la wallet sale) |
 | `pmbot/scheduler/` | ✅ | Rutina diaria (settle → salidas → entradas → reporte) + copia intradía en tiempo real y escaneo de arbitraje |
 | `pmbot/monitor/` | ✅ parcial | Logging estructurado, Telegram. Dashboard web: fase 3 |
-| `research/`, `news_trading`, `backtest/`, broker real | 🔜 fase 3 | |
+| `pmbot/backtest/` | ✅ copy | "Qué habría pasado copiando a la wallet X N días" con resoluciones reales |
+| `research/`, `news_trading`, dashboard | 🔜 | |
 
-**Todo es simulado**: el dinero es virtual (`capital.paper_starting_usdc`),
-pero los precios, books, slippage y resoluciones son reales. Si un día no hay
+**Por defecto todo es paper** (dinero virtual, precios/books/resoluciones
+reales). El modo real solo se activa con `LIVE_TRADING=I_UNDERSTAND_THE_RISKS`
+más las claves de Polymarket — ver `DESPLIEGUE.md` §7. Si un día no hay
 oportunidades que superen los umbrales, el bot NO opera y lo reporta.
 
 ## Instalación local
@@ -79,11 +81,8 @@ las alertas llegan al chat.
 
 ## Paper → real
 
-1. La fase 2 corre en paper por diseño; el broker real no existe todavía.
-2. **Antes de pasar a real**: correr el paper 2–4 semanas mínimo y revisar el
-   PnL por estrategia en los reportes diarios. Solo pasar a real si hay
-   ventaja consistente, y con menos capital del que uno está dispuesto a perder.
-3. Cuando exista el broker real (fase 3), el modo real exigirá **exactamente**:
+Pasos completos en `DESPLIEGUE.md` §7 (cuenta, USDC en Polygon, claves,
+`live-check`). El modo real exige **exactamente**:
 
    ```
    LIVE_TRADING=I_UNDERSTAND_THE_RISKS
