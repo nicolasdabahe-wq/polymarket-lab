@@ -62,10 +62,11 @@ intel:
 scheduler:
   # Hora UTC de la rutina diaria completa (HH:MM).
   daily_run_utc: "11:00"
-  # Polls intradía (minutos).
-  intel_poll_minutes: 30
-  smart_money_poll_minutes: 15
-  markets_refresh_minutes: 30
+  # Polls intradía (minutos). Copias y arbitraje necesitan reacción rápida;
+  # noticias no (y el LLM cuesta por corrida).
+  intel_poll_minutes: 20
+  smart_money_poll_minutes: 3
+  markets_refresh_minutes: 5
 
 telegram:
   # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).
