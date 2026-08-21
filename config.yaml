@@ -35,6 +35,19 @@ smart_money:
   top_n: 20
   # Máximo de posiciones a listar por wallet.
   positions_per_wallet: 25
+  # Validación automática por backtest: decide a quién SÍ conviene copiar.
+  # El leaderboard dice quién gana; esto dice a quién podemos replicar.
+  validation:
+    enabled: true
+    days: 30                # ventana del backtest
+    stake_usdc: 16          # tamaño simulado por copia
+    # Umbrales de tamaño a probar: se elige el más rentable por wallet
+    # (muchas ganan solo en sus apuestas de convicción).
+    thresholds: [150, 300, 500, 1000, 2000]
+    min_roi: 0.0            # habilita si copiarla habría dado >= 0%
+    min_copies: 5           # muestra mínima para dar veredicto
+    max_wallets_per_run: 20
+    revalidate_hours: 24
 
 intel:
   # Feeds RSS a vigilar. category debe coincidir con las categorías de mercados.
@@ -112,18 +125,18 @@ strategies:
     base_pct_per_trade: 0.06  # tamaño base por copia (fracción del equity)
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     min_wallet_score: 0.38
-    min_copy_usdc_of_wallet: 300   # ignorar trades chicos de la wallet
+    min_copy_usdc_of_wallet: 150   # ignorar trades chicos de la wallet
+    # Score a partir del cual se copia aunque el backtest aún no la validó.
+    trust_without_backtest: 0.60
     strong_score: 0.65        # una sola wallet dispara si score>=0.65
     strong_usdc: 1500         # ... y entró con >= 1500 USDC
     solo_big_usdc: 2500       # cualquier calificada dispara sola si mete >= 2500
     confirm_count: 2          # o si >=2 wallets calificadas coinciden
-    # Wallets que NUNCA se copian, aunque pasen los filtros de score.
-    # Backtest 2026-08-21: copiarlas dio retorno negativo sostenido.
+    # Lista negra manual: solo para vetos permanentes. El filtro real lo hace
+    # smart_money.validation (backtest diario que decide y busca el umbral
+    # óptimo por wallet); mantenerlas acá duplicaría y contradiría ese juicio.
     wallet_blacklist:
-      - "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee"  # kch123: -19.7% en 38d, WR 48%
-      - "0x17db3fcd93ba12d38382a0cade24b200185c5f6d"  # fengdubiying: sin evidencia positiva
-      - "0x6d20c35f65d9899b6d6b74f8466e824580f9a165"  # Djdjdjekekek: -20.1% en 50 copias, WR 40% (esports en vivo, incopiable)
-      - "0x2c335066fe58fe9237c3d3dc7b275c2a034a0563"  # -2.0% en 197 copias, WR 48% (deportes en vivo)
+      - "0x6d20c35f65d9899b6d6b74f8466e824580f9a165"  # Djdjdjekekek: -20% con todos los umbrales (esports en vivo)
     # Consenso de posiciones (rutina diaria): entrar cuando >=N wallets top
     # SOSTIENEN la misma posición grande en mercados lentos, aunque no
     # hayamos visto el trade en vivo. Complementa la copia en tiempo real.
@@ -131,7 +144,9 @@ strategies:
       enabled: true
       min_wallets: 2
       min_value_usdc: 1500        # posición mínima de cada wallet
-      categories: [politics, economy, geopolitics, crypto]  # nada de deportes en vivo
+      categories: [politics, economy, geopolitics, crypto, sports]
+      # Deportes SOLO antes del inicio del partido (en vivo es incopiable).
+      sports_only_prematch: true
       max_entry_price: 0.90
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/

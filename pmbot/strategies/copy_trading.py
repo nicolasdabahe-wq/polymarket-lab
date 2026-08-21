@@ -49,6 +49,31 @@ class CopyCandidate:
         return max(self.wallets, key=lambda w: w["score"])
 
 
+def market_not_started(market_row: sqlite3.Row,
+                       buffer_minutes: float = 20.0) -> bool:
+    """True si el evento todavía no empezó (con margen). Los mercados sin
+    hora de inicio se consideran no-eventos y pasan."""
+    import json as _json
+    from datetime import datetime, timedelta, timezone as _tz
+    try:
+        raw = _json.loads(market_row["raw"] or "{}")
+    except (ValueError, TypeError):
+        return True
+    start = raw.get("gameStartTime") or raw.get("eventStartTime")
+    if not start:
+        return True
+    text = str(start).strip().replace(" ", "T", 1)
+    if text.endswith("+00"):
+        text = text[:-3] + "+00:00"
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_tz.utc)
+    return datetime.now(_tz.utc) + timedelta(minutes=buffer_minutes) < when
+
+
 def _outcome_index(market_row: sqlite3.Row, outcome: str) -> int | None:
     """Índice del outcome según la lista de outcomes del mercado (raw Gamma)."""
     import json as _json
@@ -103,7 +128,9 @@ def pick_holdings_consensus(holdings: list[dict[str, Any]],
 
 
 def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
-                    cfg: dict[str, Any]) -> list[CopyCandidate]:
+                    cfg: dict[str, Any],
+                    min_usdc_by_wallet: dict[str, float] | None = None
+                    ) -> list[CopyCandidate]:
     """Agrupa señales calificadas y aplica las reglas de disparo. Pura.
 
     signals: payloads de señales new_trade (wallet, side, outcome,
@@ -143,10 +170,13 @@ def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
             cand.wallets.append({"wallet": s["wallet"], "score": score,
                                  "price": price, "usdc": usdc})
 
+    by_wallet = min_usdc_by_wallet or {}
     out = []
     for cand in grouped.values():
-        # El tamaño mínimo se evalúa sobre el TOTAL agregado por wallet.
-        cand.wallets = [w for w in cand.wallets if w["usdc"] >= min_usdc]
+        # El tamaño mínimo se evalúa sobre el TOTAL agregado por wallet, con
+        # el umbral que el backtest encontró óptimo para esa wallet.
+        cand.wallets = [w for w in cand.wallets
+                        if w["usdc"] >= by_wallet.get(w["wallet"], min_usdc)]
         if not cand.wallets:
             continue
         leader = cand.leader
@@ -178,9 +208,29 @@ class CopyTradingStrategy:
         return {w.lower() for w in self.cfg.get("wallet_blacklist") or []}
 
     def _wallet_scores(self) -> dict[str, float]:
-        return {r["wallet"]: r["score"] for r in self.conn.execute(
-            "SELECT wallet, score FROM wallet_ranking WHERE passed_filters = 1")
-            if r["wallet"] not in self.blacklist}
+        """Wallets copiables: pasan filtros, no están en lista negra y el
+        backtest no las rechazó. Las no testeadas se permiten solo si su
+        score supera trust_without_backtest (para no frenar rachas nuevas)."""
+        rejected = {r["wallet"] for r in self.conn.execute(
+            "SELECT wallet FROM wallet_backtest WHERE verdict = 'rechazada'")}
+        validated = {r["wallet"] for r in self.conn.execute(
+            "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'")}
+        trust_score = float(self.cfg.get("trust_without_backtest", 0.60))
+        out: dict[str, float] = {}
+        for r in self.conn.execute(
+                "SELECT wallet, score FROM wallet_ranking WHERE passed_filters = 1"):
+            w, score = r["wallet"], r["score"]
+            if w in self.blacklist or w in rejected:
+                continue
+            if w in validated or score >= trust_score:
+                out[w] = score
+        return out
+
+    def _min_usdc_by_wallet(self) -> dict[str, float]:
+        """Umbral de tamaño óptimo por wallet según su backtest."""
+        return {r["wallet"]: r["min_usdc"] for r in self.conn.execute(
+            """SELECT wallet, min_usdc FROM wallet_backtest
+               WHERE verdict = 'copiable' AND min_usdc IS NOT NULL""")}
 
     def _unprocessed_signals(self) -> list[sqlite3.Row]:
         return self.conn.execute(
@@ -200,7 +250,8 @@ class CopyTradingStrategy:
             p = from_json(r["payload"]) or {}
             p["condition_id"] = p.get("condition_id") or r["condition_id"]
             payloads.append(p)
-        candidates = pick_candidates(payloads, self._wallet_scores(), self.cfg)
+        candidates = pick_candidates(payloads, self._wallet_scores(), self.cfg,
+                                     self._min_usdc_by_wallet())
         with self.conn:
             self.conn.execute(
                 """UPDATE signals SET processed = 1 WHERE source='smart_money'
@@ -278,6 +329,12 @@ class CopyTradingStrategy:
                 "SELECT * FROM markets WHERE condition_id = ? AND active = 1",
                 (cand["condition_id"],)).fetchone()
             if not market or market["category"] not in allowed_cats:
+                continue
+            # Deportes: solo ANTES del inicio. Durante el partido el precio
+            # se mueve con el juego y copiar con retraso es perder.
+            if (market["category"] == "sports"
+                    and hc_cfg.get("sports_only_prematch", True)
+                    and not market_not_started(market)):
                 continue
             idx = _outcome_index(market, cand["outcome"])
             if idx is None:

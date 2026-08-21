@@ -15,6 +15,7 @@
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
+  python -m pmbot validate-wallets   # backtestea el ranking y habilita a quién copiar
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -156,6 +157,21 @@ async def cmd_portfolio(app: App) -> None:
               f"{(p['question'] or '')[:50]}")
     if not positions:
         print("  (ninguna)")
+
+
+async def cmd_validate_wallets(app: App) -> None:
+    results = await app.wallet_validator.validate_ranked()
+    if not results:
+        print("Nada que validar (ya testeadas recientemente o ranking vacío).")
+    for r in sorted(results, key=lambda x: -(x["roi"] or 0)):
+        wr = f"{r['win_rate']:.0%}" if r["win_rate"] is not None else "—"
+        mark = {"copiable": "✅", "rechazada": "❌"}.get(r["verdict"], "⚪")
+        print(f"{mark} {(r['username'] or r['wallet'][:12]):<22} "
+              f"ROI {r['roi']:+7.1%} | WR {wr:>4} | {r['n']:>3} copias "
+              f"→ {r['verdict']}")
+    rows = app.conn.execute(
+        "SELECT COUNT(*) c FROM wallet_backtest WHERE verdict='copiable'").fetchone()
+    print(f"\nWallets habilitadas para copia: {rows['c']}")
 
 
 def cmd_set_baseline(app: App, amount: float) -> None:
@@ -363,6 +379,7 @@ def main() -> None:
     sub.add_parser("live-check")
     sub.add_parser("notify-test")
     sub.add_parser("test-trade")
+    sub.add_parser("validate-wallets")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -407,6 +424,8 @@ def main() -> None:
                 await cmd_notify_test(app)
             elif args.command == "test-trade":
                 await cmd_test_trade(app)
+            elif args.command == "validate-wallets":
+                await cmd_validate_wallets(app)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":

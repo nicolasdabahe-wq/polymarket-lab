@@ -6,5 +6,6 @@ informativas cuando una wallet top abre una posición nueva. La copia real
 """
 from .ranking import WalletScore, WalletScorer
 from .tracker import WalletTracker
+from .validator import WalletValidator
 
-__all__ = ["WalletScore", "WalletScorer", "WalletTracker"]
+__all__ = ["WalletScore", "WalletScorer", "WalletTracker", "WalletValidator"]

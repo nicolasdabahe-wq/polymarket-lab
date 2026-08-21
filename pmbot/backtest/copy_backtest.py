@@ -147,9 +147,35 @@ class CopyBacktester:
         self.api = api
         self.gamma = gamma
 
+    async def run_multi(self, wallet: str, days: int, stake_usdc: float,
+                        thresholds: list[float], slippage: float = 0.01
+                        ) -> dict[float, BacktestReport]:
+        """Un solo fetch de actividad, simulado con varios umbrales de tamaño.
+
+        El umbral óptimo cambia por wallet: muchas son rentables solo en sus
+        apuestas grandes (convicción) y pierden en las medianas.
+        """
+        base = await self.run(wallet, days=days, stake_usdc=stake_usdc,
+                              min_copy_usdc=min(thresholds), slippage=slippage,
+                              _keep_raw=True)
+        out: dict[float, BacktestReport] = {}
+        raw_trades = getattr(base, "_raw_trades", None)
+        raw_outcomes = getattr(base, "_raw_outcomes", None)
+        if raw_trades is None:
+            return {min(thresholds): base}
+        for th in thresholds:
+            sim = simulate_copy(raw_trades, raw_outcomes, stake_usdc, th,
+                                slippage)
+            out[th] = BacktestReport(
+                wallet=wallet, days_requested=days,
+                days_covered=base.days_covered,
+                n_wallet_trades=base.n_wallet_trades, trades=sim)
+        return out
+
     async def run(self, wallet: str, days: int = 90, stake_usdc: float = 8.0,
                   min_copy_usdc: float = 500.0, slippage: float = 0.01,
-                  max_activities: int = 5000) -> BacktestReport:
+                  max_activities: int = 5000,
+                  _keep_raw: bool = False) -> BacktestReport:
         wallet = wallet.lower()
         cutoff = time.time() - days * SECONDS_PER_DAY
         activity: list[Activity] = []
@@ -181,6 +207,9 @@ class CopyBacktester:
         report = BacktestReport(wallet=wallet, days_requested=days,
                                 days_covered=covered,
                                 n_wallet_trades=len(trades), trades=sim)
+        if _keep_raw:
+            report._raw_trades = trades      # type: ignore[attr-defined]
+            report._raw_outcomes = outcomes  # type: ignore[attr-defined]
         log.info("backtest %s: %d trades de la wallet, %d copias simuladas",
                  wallet[:10], len(trades), len(sim))
         return report

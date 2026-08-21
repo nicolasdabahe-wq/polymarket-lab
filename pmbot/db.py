@@ -158,6 +158,18 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     PRIMARY KEY (strategy, condition_id, outcome)
 );
 
+-- Validación automática por backtest: qué pasa si copiamos a esta wallet.
+CREATE TABLE IF NOT EXISTS wallet_backtest (
+    wallet        TEXT PRIMARY KEY,
+    roi           REAL,
+    win_rate      REAL,
+    n_copies      INTEGER,
+    days_covered  REAL,
+    verdict       TEXT NOT NULL,   -- 'copiable' | 'rechazada' | 'sin_datos'
+    min_usdc      REAL,            -- umbral de tamaño óptimo para copiarla
+    tested_at     TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS equity_history (
     ts              TEXT PRIMARY KEY,
     cash_usdc       REAL NOT NULL,
@@ -169,6 +181,7 @@ CREATE TABLE IF NOT EXISTS equity_history (
 # Migraciones idempotentes para bases creadas por versiones anteriores.
 MIGRATIONS = [
     "ALTER TABLE signals ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE wallet_backtest ADD COLUMN min_usdc REAL",
 ]
 
 

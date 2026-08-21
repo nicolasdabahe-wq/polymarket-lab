@@ -13,7 +13,8 @@ from .http import HttpClient
 from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
 from .risk import RiskManager
-from .smart_money import WalletScorer, WalletTracker
+from .backtest import CopyBacktester
+from .smart_money import WalletScorer, WalletTracker, WalletValidator
 from .strategies import (ArbitrageStrategy, CopyTradingStrategy,
                          CryptoValueStrategy)
 
@@ -29,6 +30,7 @@ class App:
     market_store: MarketStore
     wallet_scorer: WalletScorer
     wallet_tracker: WalletTracker
+    wallet_validator: WalletValidator
     news_fetcher: NewsFetcher
     news_analyzer: NewsAnalyzer
     briefing: BriefingBuilder
@@ -74,6 +76,9 @@ def build_app(cfg: Config) -> App:
         market_store=MarketStore(conn),
         wallet_scorer=WalletScorer(data_api, conn, cfg.section("smart_money")),
         wallet_tracker=WalletTracker(data_api, conn, cfg.section("smart_money")),
+        wallet_validator=WalletValidator(
+            conn, CopyBacktester(data_api, GammaClient(http)),
+            cfg.section("smart_money")),
         news_fetcher=NewsFetcher(http, conn, cfg.section("intel")),
         news_analyzer=NewsAnalyzer(conn, cfg.section("intel"),
                                    cfg.anthropic_api_key),

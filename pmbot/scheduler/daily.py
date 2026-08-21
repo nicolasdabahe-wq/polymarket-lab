@@ -63,6 +63,16 @@ class DailyRoutine:
             if meta.get("copied_wallet"):
                 wallets.add(meta["copied_wallet"])
         await self.app.wallet_tracker.refresh_positions(sorted(wallets))
+        # Validar por backtest a quién conviene copiar (crece el universo
+        # de copiables con evidencia, sin lista negra manual).
+        try:
+            results = await self.app.wallet_validator.validate_ranked()
+            if results:
+                ok = [r for r in results if r["verdict"] == "copiable"]
+                log.info("validación: %d/%d wallets habilitadas para copia",
+                         len(ok), len(results))
+        except Exception:
+            log.exception("validación de wallets falló; sigo")
         return sorted(wallets)
 
     async def reconcile(self) -> list[str]:
