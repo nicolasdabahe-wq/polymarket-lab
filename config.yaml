@@ -74,6 +74,8 @@ scheduler:
   # 10 min es el óptimo: las carteras cambian lento y más frecuencia solo
   # provoca rate-limits (429) que frenan TODOS los polls con reintentos.
   holdings_consensus_minutes: 10
+  # Reconciliación con la blockchain (adopta fills tardíos).
+  reconcile_minutes: 5
 
 telegram:
   # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).

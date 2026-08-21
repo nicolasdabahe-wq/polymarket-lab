@@ -31,6 +31,7 @@ class Position:
     condition_id: str
     title: str
     outcome: str
+    outcome_index: int
     size: float
     avg_price: float
     cur_price: float
@@ -103,6 +104,7 @@ class DataApiClient:
                     condition_id=r.get("conditionId", ""),
                     title=r.get("title", ""),
                     outcome=r.get("outcome", ""),
+                    outcome_index=int(r.get("outcomeIndex") or 0),
                     size=float(r.get("size") or 0),
                     avg_price=float(r.get("avgPrice") or 0),
                     cur_price=float(r.get("curPrice") or 0),

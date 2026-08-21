@@ -29,8 +29,9 @@ import time
 from typing import Any
 
 from ..data.clob import ClobClient as ReadOnlyClob
+from ..db import to_json
 from ..risk import OrderRequest, RiskManager
-from .paper import Fill, MIN_SHARES, PaperBroker
+from .paper import Fill, MIN_SHARES, PaperBroker, _now
 
 log = logging.getLogger("pmbot.execution.live")
 
@@ -269,7 +270,7 @@ class LiveBroker(PaperBroker):
         Devuelve (shares, precio); el precio se aproxima con el límite
         (conservador: nunca mejor de lo que contabilizamos)."""
         matched = 0.0
-        for wait in (2, 3, 5):
+        for wait in (2, 3, 5, 5, 10):
             time.sleep(wait)
             try:
                 info = client.get_order(order_id) or {}
@@ -277,11 +278,16 @@ class LiveBroker(PaperBroker):
                 continue
             matched = float(info.get("size_matched") or 0)
             status = str(info.get("status", "")).lower()
-            if status not in ("delayed", "live"):
+            if matched > 0 or status not in ("delayed", "live"):
                 break
         try:
             from py_clob_client_v2.clob_types import OrderPayload
             client.cancel_order(OrderPayload(orderID=order_id))
+            # La cancelación puede cruzarse con un match tardío: releer el
+            # estado final para no perder shares ya compradas.
+            time.sleep(2)
+            final = client.get_order(order_id) or {}
+            matched = max(matched, float(final.get("size_matched") or 0))
         except Exception:
             pass  # ya matcheada/cancelada: no hay nada que cancelar
         return matched, limit_price
@@ -328,3 +334,68 @@ class LiveBroker(PaperBroker):
                             or float(raw.get("allowance") or 0) > 0,
             "raw": raw,
         }
+
+    # ---------- reconciliación con la blockchain ----------
+
+    async def reconcile_positions(self, data_api: Any) -> list[str]:
+        """Sincroniza la contabilidad local con las posiciones on-chain.
+
+        Los mercados con delay de matcheo (deportes en vivo) pueden llenar
+        una orden DESPUÉS de que el broker la dio por muerta: la posición
+        queda huérfana (el bot no la gestiona ni la vende). Acá se adopta.
+
+        Solo se adoptan mercados donde el bot intentó comprar (hay orden en
+        la tabla): nunca toca posiciones preexistentes del dueño.
+        """
+        try:
+            onchain = await data_api.positions(self.proxy_address, limit=100)
+        except Exception as exc:
+            log.warning("reconciliación: no se pudieron leer posiciones: %s", exc)
+            return []
+
+        notes: list[str] = []
+        for pos in onchain:
+            if pos.size <= 0.01:
+                continue
+            order = self.conn.execute(
+                """SELECT strategy, token_id, reason FROM orders
+                   WHERE condition_id = ? AND side = 'BUY'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (pos.condition_id,)).fetchone()
+            if not order:
+                continue  # posición ajena al bot: no se toca
+            row = self.conn.execute(
+                """SELECT size FROM paper_positions
+                   WHERE condition_id = ? AND outcome = ?""",
+                (pos.condition_id, pos.outcome)).fetchone()
+            local_size = float(row["size"]) if row else 0.0
+            missing = pos.size - local_size
+            if missing <= 0.01:
+                continue
+            with self.conn:
+                if row:
+                    self.conn.execute(
+                        """UPDATE paper_positions SET size = ?, updated_at = ?
+                           WHERE condition_id = ? AND outcome = ?""",
+                        (pos.size, _now(), pos.condition_id, pos.outcome))
+                else:
+                    market = self.conn.execute(
+                        "SELECT category FROM markets WHERE condition_id = ?",
+                        (pos.condition_id,)).fetchone()
+                    self.conn.execute(
+                        """INSERT INTO paper_positions (strategy, condition_id,
+                           outcome, outcome_index, token_id, question, category,
+                           size, avg_price, meta, opened_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (order["strategy"], pos.condition_id, pos.outcome,
+                         pos.outcome_index, order["token_id"], pos.title,
+                         market["category"] if market else "other",
+                         pos.size, pos.avg_price,
+                         to_json({"question": pos.title, "adopted": True}),
+                         _now(), _now()))
+            note = (f"adoptada posición on-chain no registrada: {missing:.1f} u "
+                    f"de '{pos.title[:45]}' @ {pos.avg_price:.3f} "
+                    f"[{order['strategy']}]")
+            log.warning("RECONCILIACIÓN: %s", note)
+            notes.append(note)
+        return notes

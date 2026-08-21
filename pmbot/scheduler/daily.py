@@ -65,6 +65,19 @@ class DailyRoutine:
         await self.app.wallet_tracker.refresh_positions(sorted(wallets))
         return sorted(wallets)
 
+    async def reconcile(self) -> list[str]:
+        """Adopta posiciones on-chain que el bot no registró (fills tardíos
+        en mercados con delay). Solo aplica al broker real."""
+        reconcile = getattr(self.app.broker, "reconcile_positions", None)
+        if reconcile is None:
+            return []
+        notes = await reconcile(self.app.data_api)
+        if notes:
+            await self.app.notifier.send(
+                "🔄 Posiciones reconciliadas con la blockchain:\n"
+                + "\n".join(f"• {n}" for n in notes))
+        return notes
+
     async def settle_resolved(self) -> list[str]:
         """Liquida posiciones de mercados ya resueltos."""
         settled: list[str] = []
@@ -92,6 +105,7 @@ class DailyRoutine:
     async def trade_cycle(self) -> dict[str, list[str]]:
         """Rebalanceo + oportunidades nuevas. Devuelve movimientos por tipo."""
         moves: dict[str, list[str]] = {}
+        moves["reconciliadas"] = await self.reconcile()
         moves["liquidadas"] = await self.settle_resolved()
         moves["salidas"] = await self.app.copy_trading.check_exits()
         moves["copias"] = await self.app.copy_trading.process_signals()
@@ -249,6 +263,12 @@ class DailyRoutine:
                 await self.app.notifier.send(
                     "🤖 Copia ejecutada:\n" + "\n".join(f"• {d}" for d in copied))
 
+    async def poll_reconcile(self) -> None:
+        try:
+            await self.reconcile()
+        except Exception:
+            log.exception("reconciliación falló; sigo")
+
     async def poll_holdings_consensus(self) -> None:
         """Refresca las carteras de las wallets top y busca consensos."""
         top = self.app.wallet_scorer.top_wallets()
@@ -287,6 +307,8 @@ async def run_forever(app: App) -> None:
     markets_every = timedelta(minutes=float(sched.get("markets_refresh_minutes", 30)))
     consensus_every = timedelta(
         minutes=float(sched.get("holdings_consensus_minutes", 30)))
+    reconcile_every = timedelta(
+        minutes=float(sched.get("reconcile_minutes", 5)))
 
     now = datetime.now(timezone.utc)
     next_daily = next_daily_run(now, daily_utc)
@@ -294,6 +316,7 @@ async def run_forever(app: App) -> None:
     next_sm = now
     next_markets = now
     next_consensus = now
+    next_reconcile = now
     log.info("scheduler iniciado [%s]. Próxima rutina diaria: %s UTC",
              app.cfg.mode, next_daily.isoformat(timespec="minutes"))
 
@@ -328,8 +351,12 @@ async def run_forever(app: App) -> None:
             if now >= next_consensus:
                 next_consensus = now + consensus_every
                 await routine.poll_holdings_consensus()
+            if now >= next_reconcile:
+                next_reconcile = now + reconcile_every
+                await routine.poll_reconcile()
         except Exception:
             # Ningún fallo transitorio debe tumbar el loop 24/7.
             log.exception("error en el ciclo del scheduler; sigo")
-        wake = min(next_daily, next_intel, next_sm, next_markets, next_consensus)
+        wake = min(next_daily, next_intel, next_sm, next_markets,
+                   next_consensus, next_reconcile)
         await asyncio.sleep(max((wake - datetime.now(timezone.utc)).total_seconds(), 1.0))
