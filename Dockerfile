@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY config.yaml .
 COPY pmbot/ pmbot/
 
+# El volumen de datos debe pertenecer al usuario del bot, no a root;
+# si no, SQLite no puede escribir y el contenedor entra en crash-loop.
+RUN mkdir -p /data /app/reports && chown -R pmbot:pmbot /data /app/reports
+
 USER pmbot
 ENV PMBOT_VAR_DIR=/data \
     PMBOT_LOG_JSON=1
