@@ -97,6 +97,16 @@ class LiveBroker(PaperBroker):
                            signature_type=self._signature_type,
                            funder=self.proxy_address)
             c.set_api_creds(c.create_or_derive_api_key())
+            # El CLOB cachea saldo/allowance por cuenta del lado del server;
+            # para cuentas que nunca operaron por API arranca en 0 hasta que
+            # se le pide un refresh explícito contra la blockchain.
+            try:
+                from py_clob_client_v2.clob_types import (
+                    AssetType, BalanceAllowanceParams)
+                c.update_balance_allowance(
+                    BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+            except Exception as exc:
+                log.warning("update_balance_allowance falló: %s", exc)
             self._client = c
             log.info("CLOB V2 autenticado como %s (funder %s)",
                      c.get_address(), self.proxy_address)
