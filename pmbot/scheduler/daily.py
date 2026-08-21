@@ -74,8 +74,9 @@ class DailyRoutine:
         notes = await reconcile(self.app.data_api)
         if notes:
             await self.app.notifier.send(
-                "🔄 Posiciones reconciliadas con la blockchain:\n"
-                + "\n".join(f"• {n}" for n in notes))
+                "🎯 TRADE detectado (fill tardío en mercado con delay):\n"
+                + "\n".join(f"• {n}" for n in notes)
+                + "\n\nLa posición ya está registrada y el bot la gestiona.")
         return notes
 
     async def settle_resolved(self) -> list[str]:
@@ -100,6 +101,11 @@ class DailyRoutine:
             if fill.status == "FILLED":
                 settled.append(f"{(pos['question'] or '')[:60]} — resuelto a "
                                f"{payout:g}, PnL {fill.realized_pnl:+.2f}")
+        if settled:
+            emoji = "🏆" if any("+" in s for s in settled) else "📕"
+            await self.app.notifier.send(
+                f"{emoji} Mercado(s) resuelto(s):\n"
+                + "\n".join(f"• {s}" for s in settled))
         return settled
 
     async def trade_cycle(self) -> dict[str, list[str]]:
@@ -266,6 +272,8 @@ class DailyRoutine:
     async def poll_reconcile(self) -> None:
         try:
             await self.reconcile()
+            # Liquidar apenas resuelve el mercado (no esperar al día siguiente).
+            await self.settle_resolved()
         except Exception:
             log.exception("reconciliación falló; sigo")
 

@@ -133,10 +133,9 @@ async def cmd_trade_cycle(app: App) -> None:
 
 async def cmd_portfolio(app: App) -> None:
     # Sincronizar con la blockchain antes de mostrar (fills tardíos).
-    reconcile = getattr(app.broker, "reconcile_positions", None)
-    if reconcile is not None:
-        for note in await reconcile(app.data_api):
-            print(f"🔄 {note}")
+    # Vía DailyRoutine para que la adopción también avise por Telegram.
+    for note in await DailyRoutine(app).reconcile():
+        print(f"🔄 {note}")
     state = app.broker.portfolio_state()
     starting = app.broker.starting_capital()
     pnl = state.equity - starting
