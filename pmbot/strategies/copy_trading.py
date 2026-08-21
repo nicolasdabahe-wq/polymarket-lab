@@ -113,6 +113,7 @@ def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
     min_usdc = float(cfg.get("min_copy_usdc_of_wallet", 500))
     strong_score = float(cfg.get("strong_score", 0.70))
     strong_usdc = float(cfg.get("strong_usdc", 2000))
+    solo_big_usdc = float(cfg.get("solo_big_usdc", 999999))
     confirm_count = int(cfg.get("confirm_count", 2))
 
     grouped: dict[tuple[str, int], CopyCandidate] = {}
@@ -151,8 +152,10 @@ def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
         leader = cand.leader
         strong_single = (leader["score"] >= strong_score
                          and leader["usdc"] >= strong_usdc)
+        # Entrada muy grande de cualquier wallet calificada: también dispara.
+        big_single = any(w["usdc"] >= solo_big_usdc for w in cand.wallets)
         consensus = len(cand.wallets) >= confirm_count
-        if strong_single or consensus:
+        if strong_single or big_single or consensus:
             out.append(cand)
     return out
 

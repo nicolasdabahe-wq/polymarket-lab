@@ -70,6 +70,8 @@ scheduler:
   intel_poll_minutes: 10
   smart_money_poll_minutes: 3
   markets_refresh_minutes: 5
+  # Consenso de posiciones sostenidas: refresco de carteras + chequeo.
+  holdings_consensus_minutes: 30
 
 telegram:
   # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).
@@ -97,7 +99,7 @@ strategies:
   arbitrage:
     enabled: true
     budget_pct: 0.30          # máx fracción del equity en esta estrategia
-    min_edge: 0.015           # edge mínimo neto (1.5%) para entrar
+    min_edge: 0.01            # edge mínimo neto (1%) para entrar
     max_usdc_per_trade: 50    # risk/ igual re-verifica contra el 20% por mercado
     scan_top_markets: 300
   copy_trading:
@@ -105,10 +107,11 @@ strategies:
     budget_pct: 0.50
     base_pct_per_trade: 0.06  # tamaño base por copia (fracción del equity)
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
-    min_wallet_score: 0.42
+    min_wallet_score: 0.38
     min_copy_usdc_of_wallet: 300   # ignorar trades chicos de la wallet
     strong_score: 0.65        # una sola wallet dispara si score>=0.65
     strong_usdc: 1500         # ... y entró con >= 1500 USDC
+    solo_big_usdc: 2500       # cualquier calificada dispara sola si mete >= 2500
     confirm_count: 2          # o si >=2 wallets calificadas coinciden
     # Wallets que NUNCA se copian, aunque pasen los filtros de score.
     # Backtest 2026-08-21: copiarlas dio retorno negativo sostenido.
@@ -123,7 +126,7 @@ strategies:
     holdings_consensus:
       enabled: true
       min_wallets: 2
-      min_value_usdc: 3000        # posición mínima de cada wallet
+      min_value_usdc: 1500        # posición mínima de cada wallet
       categories: [politics, economy, geopolitics, crypto]  # nada de deportes en vivo
       max_entry_price: 0.90
   news_trading:
@@ -134,7 +137,7 @@ strategies:
     enabled: true
     budget_pct: 0.20
     base_pct_per_trade: 0.05
-    min_edge: 0.12            # el modelo debe discrepar >=12 puntos de prob.
+    min_edge: 0.08            # el modelo debe discrepar >=8 puntos de prob.
     max_entry_price: 0.85
     min_days_to_resolution: 0.5
     max_days_to_resolution: 45

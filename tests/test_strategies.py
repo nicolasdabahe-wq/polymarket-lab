@@ -48,6 +48,18 @@ def test_strong_wallet_small_entry_does_not_trigger():
     assert pick_candidates([sig("0xstrong", usdc=800)], SCORES, CFG) == []
 
 
+def test_big_single_entry_triggers_any_qualified_wallet():
+    # Wallet calificada (no strong) con entrada muy grande: dispara sola.
+    cfg = dict(CFG, solo_big_usdc=2500)
+    [cand] = pick_candidates([sig("0xgood1", usdc=3000)], SCORES, cfg)
+    assert cand.leader["usdc"] == 3000
+
+
+def test_big_entry_threshold_not_met():
+    cfg = dict(CFG, solo_big_usdc=2500)
+    assert pick_candidates([sig("0xgood1", usdc=2000)], SCORES, cfg) == []
+
+
 def test_two_good_wallets_consensus_triggers():
     cands = pick_candidates([sig("0xgood1"), sig("0xgood2")], SCORES, CFG)
     assert len(cands) == 1

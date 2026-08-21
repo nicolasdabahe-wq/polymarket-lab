@@ -249,6 +249,20 @@ class DailyRoutine:
                 await self.app.notifier.send(
                     "🤖 Copia ejecutada:\n" + "\n".join(f"• {d}" for d in copied))
 
+    async def poll_holdings_consensus(self) -> None:
+        """Refresca las carteras de las wallets top y busca consensos."""
+        top = self.app.wallet_scorer.top_wallets()
+        wallets = [r["wallet"] for r in top]
+        if not wallets:
+            return
+        await self.app.wallet_tracker.refresh_positions(wallets)
+        entries = await self.app.copy_trading.check_holdings_consensus()
+        for desc in entries:
+            log.info("CONSENSO intradía: %s", desc)
+        if entries:
+            await self.app.notifier.send(
+                "🤝 Consenso de posiciones:\n" + "\n".join(f"• {d}" for d in entries))
+
     async def poll_arbitrage(self) -> None:
         executed = await self.app.arbitrage.scan_and_execute()
         for desc in executed:
@@ -271,12 +285,15 @@ async def run_forever(app: App) -> None:
     intel_every = timedelta(minutes=float(sched.get("intel_poll_minutes", 30)))
     sm_every = timedelta(minutes=float(sched.get("smart_money_poll_minutes", 15)))
     markets_every = timedelta(minutes=float(sched.get("markets_refresh_minutes", 30)))
+    consensus_every = timedelta(
+        minutes=float(sched.get("holdings_consensus_minutes", 30)))
 
     now = datetime.now(timezone.utc)
     next_daily = next_daily_run(now, daily_utc)
     next_intel = now  # primer poll inmediato
     next_sm = now
     next_markets = now
+    next_consensus = now
     log.info("scheduler iniciado [%s]. Próxima rutina diaria: %s UTC",
              app.cfg.mode, next_daily.isoformat(timespec="minutes"))
 
@@ -308,8 +325,11 @@ async def run_forever(app: App) -> None:
             if now >= next_sm:
                 next_sm = now + sm_every
                 await routine.poll_smart_money()
+            if now >= next_consensus:
+                next_consensus = now + consensus_every
+                await routine.poll_holdings_consensus()
         except Exception:
             # Ningún fallo transitorio debe tumbar el loop 24/7.
             log.exception("error en el ciclo del scheduler; sigo")
-        wake = min(next_daily, next_intel, next_sm, next_markets)
+        wake = min(next_daily, next_intel, next_sm, next_markets, next_consensus)
         await asyncio.sleep(max((wake - datetime.now(timezone.utc)).total_seconds(), 1.0))
