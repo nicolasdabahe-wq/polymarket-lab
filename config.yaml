@@ -117,7 +117,9 @@ risk:
   min_order_usdc: 10.0      # piso por apuesta pedido por el dueño
   # Freno TOTAL: a diferencia del stop diario (que se reinicia cada día UTC),
   # este no se levanta solo. Protege el capital cuando nadie está mirando.
-  max_drawdown_pct: 0.40
+  # 60% => el bot para de comprar si el equity baja de ~$112.
+  # Decisión explícita del dueño (2026-08-21), advertido del alcance.
+  max_drawdown_pct: 0.60
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.
 
