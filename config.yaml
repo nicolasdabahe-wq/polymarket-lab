@@ -111,11 +111,13 @@ risk:
   max_pct_per_copied_wallet: 0.25
   max_pct_per_category: 0.50
   max_total_exposure_pct: 0.85
-  daily_stop_loss_pct: 0.10
+  # Con apuestas de ~$14, un stop del 10% se alcanzaba con 2 posiciones
+  # perdidas: demasiado pronto. 20% da margen para ~4 antes de frenar el día.
+  daily_stop_loss_pct: 0.20
   min_order_usdc: 10.0      # piso por apuesta pedido por el dueño
   # Freno TOTAL: a diferencia del stop diario (que se reinicia cada día UTC),
   # este no se levanta solo. Protege el capital cuando nadie está mirando.
-  max_drawdown_pct: 0.25
+  max_drawdown_pct: 0.40
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.
 
