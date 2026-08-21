@@ -12,6 +12,7 @@
   python -m pmbot kill on|off        # kill switch manual (bloquea compras)
   python -m pmbot backtest-wallet W  # qué habría pasado copiando a W (o 'top')
   python -m pmbot live-check         # verificar conexión/saldo del modo real
+  python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -194,6 +195,16 @@ async def cmd_live_check(app: App) -> None:
               f"| ${p.current_value:.2f} | {p.title[:45]}")
 
 
+async def cmd_notify_test(app: App) -> None:
+    if not app.notifier.enabled:
+        print("Telegram no configurado: faltan TELEGRAM_BOT_TOKEN y/o "
+              "TELEGRAM_CHAT_ID en .env (o telegram.enabled en config.yaml).")
+        return
+    await app.notifier.send("✅ pmbot conectado a Telegram. Por acá van a "
+                            "llegar los trades y el reporte diario.")
+    print("Mensaje enviado — revisá tu Telegram.")
+
+
 async def cmd_backtest(app: App, wallet: str, days: int, stake: float,
                        min_copy: float) -> None:
     from .backtest import CopyBacktester
@@ -246,6 +257,7 @@ def main() -> None:
     p_bt.add_argument("--min-copy", type=float, default=500.0,
                       help="tamaño mínimo del trade de la wallet para copiarlo")
     sub.add_parser("live-check")
+    sub.add_parser("notify-test")
     sub.add_parser("run")
     args = parser.parse_args()
 
@@ -284,6 +296,8 @@ def main() -> None:
                                    args.min_copy)
             elif args.command == "live-check":
                 await cmd_live_check(app)
+            elif args.command == "notify-test":
+                await cmd_notify_test(app)
             elif args.command == "run":
                 await run_forever(app)
         finally:

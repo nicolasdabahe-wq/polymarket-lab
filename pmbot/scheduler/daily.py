@@ -246,11 +246,17 @@ class DailyRoutine:
             copied = await self.app.copy_trading.process_signals()
             for desc in copied:
                 log.info("COPIA intradía: %s", desc)
+            if copied:
+                await self.app.notifier.send(
+                    "🤖 Copia ejecutada:\n" + "\n".join(f"• {d}" for d in copied))
 
     async def poll_arbitrage(self) -> None:
         executed = await self.app.arbitrage.scan_and_execute()
         for desc in executed:
             log.info("ARB intradía: %s", desc)
+        if executed:
+            await self.app.notifier.send(
+                "♻️ Arbitraje ejecutado:\n" + "\n".join(f"• {d}" for d in executed))
 
 
 async def run_forever(app: App) -> None:

@@ -68,7 +68,8 @@ scheduler:
   markets_refresh_minutes: 30
 
 telegram:
-  enabled: false
+  # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).
+  enabled: true
 
 risk:
   # Límites duros: ninguna orden (ni paper ni real) se ejecuta sin pasarlos.
