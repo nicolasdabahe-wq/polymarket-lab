@@ -280,6 +280,18 @@ async def run_forever(app: App) -> None:
     log.info("scheduler iniciado [%s]. Próxima rutina diaria: %s UTC",
              app.cfg.mode, next_daily.isoformat(timespec="minutes"))
 
+    # Bootstrap: en una instalación fresca el ranking de wallets está vacío
+    # y sin él la copia queda ciega hasta la rutina diaria. Se genera ya.
+    empty = app.conn.execute(
+        "SELECT COUNT(*) AS c FROM wallet_ranking").fetchone()["c"] == 0
+    if empty:
+        try:
+            log.info("ranking vacío: bootstrap inicial de mercados y wallets")
+            await routine.refresh_markets()
+            await routine.refresh_smart_money()
+        except Exception:
+            log.exception("bootstrap falló; la rutina diaria lo reintentará")
+
     while True:
         now = datetime.now(timezone.utc)
         try:
