@@ -212,8 +212,10 @@ async def cmd_test_trade(app: App) -> None:
     from .risk import OrderRequest
 
     print(f"Modo: {app.cfg.mode} — orden de prueba mínima (5 shares)")
+    # Sin deportes: los mercados en vivo tienen delay de matcheo y la
+    # prueba debe ser instantánea.
     row = app.conn.execute(
-        """SELECT * FROM markets WHERE active = 1
+        """SELECT * FROM markets WHERE active = 1 AND category != 'sports'
            AND yes_price BETWEEN 0.10 AND 0.60 AND volume_24h > 50000
            AND clob_token_ids IS NOT NULL
            ORDER BY volume_24h DESC LIMIT 1""").fetchone()

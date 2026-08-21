@@ -216,10 +216,46 @@ class LiveBroker(PaperBroker):
         resp = client.post_order(order, OrderType.FAK)
         shares, avg_price, error = parse_post_response(
             resp, request.side, size, price)
+
+        # Mercados con delay de partido (deportes en vivo): la orden queda
+        # "delayed" unos segundos antes de matchear. Esperamos y consultamos
+        # el resultado final; si quedó viva, se cancela para no dejar colas.
+        if (shares <= 0 and resp and resp.get("success")
+                and str(resp.get("status", "")).lower() in ("delayed", "live")
+                and resp.get("orderID")):
+            shares, avg_price = self._resolve_delayed(
+                client, resp["orderID"], price)
+            if shares <= 0:
+                return Fill("", "NO_LIQUIDITY",
+                            detail=f"sin fill tras delay ({resp.get('status')})")
         if shares <= 0:
             return Fill("", "NO_LIQUIDITY", detail=error)
         usdc = shares * avg_price
         return Fill("", "FILLED", shares, avg_price, usdc, fee=0.0)
+
+    @staticmethod
+    def _resolve_delayed(client: Any, order_id: str,
+                         limit_price: float) -> tuple[float, float]:
+        """Espera el delay de matcheo, lee lo ejecutado y cancela el resto.
+        Devuelve (shares, precio); el precio se aproxima con el límite
+        (conservador: nunca mejor de lo que contabilizamos)."""
+        matched = 0.0
+        for wait in (2, 3, 5):
+            time.sleep(wait)
+            try:
+                info = client.get_order(order_id) or {}
+            except Exception:
+                continue
+            matched = float(info.get("size_matched") or 0)
+            status = str(info.get("status", "")).lower()
+            if status not in ("delayed", "live"):
+                break
+        try:
+            from py_clob_client_v2.clob_types import OrderPayload
+            client.cancel_order(OrderPayload(orderID=order_id))
+        except Exception:
+            pass  # ya matcheada/cancelada: no hay nada que cancelar
+        return matched, limit_price
 
     def redeem(self, position: sqlite3.Row, payout_price: float,
                reason: str) -> Fill:
