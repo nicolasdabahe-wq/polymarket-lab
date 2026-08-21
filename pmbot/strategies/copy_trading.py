@@ -8,6 +8,15 @@ Entrada (sobre señales new_trade no procesadas):
 - No copiar si el precio ya se movió más de max_slippage_pct desde su entrada.
 - Tamaño: equity * base_pct_per_trade * confianza (score de la wallet líder).
 
+Consenso de posiciones (rutina diaria):
+- Si >=N wallets top SOSTIENEN la misma posición grande en un mercado lento
+  (política/economía/geo/cripto), entrar aunque el trade original no se haya
+  visto en vivo. Mismo control de slippage contra su precio promedio.
+
+Lista negra:
+- Wallets cuyo backtest de copia dio negativo se excluyen siempre
+  (config: copy_trading.wallet_blacklist), pase lo que pase con su score.
+
 Salida:
 - Cuando la wallet copiada ya no tiene la posición (o la redujo >50%), vender.
 - Si el mercado resuelve, lo liquida la rutina de settlement del scheduler.
@@ -40,6 +49,20 @@ class CopyCandidate:
         return max(self.wallets, key=lambda w: w["score"])
 
 
+def _outcome_index(market_row: sqlite3.Row, outcome: str) -> int | None:
+    """Índice del outcome según la lista de outcomes del mercado (raw Gamma)."""
+    import json as _json
+    try:
+        raw = _json.loads(market_row["raw"] or "{}")
+        outcomes = _json.loads(raw.get("outcomes") or "[]")
+    except (ValueError, TypeError):
+        return None
+    for i, name in enumerate(outcomes):
+        if str(name).strip().lower() == outcome.strip().lower():
+            return i
+    return None
+
+
 def slippage_ok(entry_price: float, current_price: float,
                 max_slippage_pct: float) -> bool:
     """True si el precio no subió más de max_slippage_pct desde la entrada
@@ -47,6 +70,36 @@ def slippage_ok(entry_price: float, current_price: float,
     if entry_price <= 0 or current_price <= 0:
         return False
     return (current_price - entry_price) / entry_price <= max_slippage_pct
+
+
+def pick_holdings_consensus(holdings: list[dict[str, Any]],
+                            cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Mercados donde >=min_wallets wallets sostienen la misma posición con
+    valor >= min_value_usdc cada una. Pura.
+
+    holdings: [{wallet, condition_id, outcome, value, avg_price}]
+    Devuelve [{condition_id, outcome, wallets, avg_entry, total_value}].
+    """
+    min_wallets = int(cfg.get("min_wallets", 2))
+    min_value = float(cfg.get("min_value_usdc", 5000))
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for h in holdings:
+        if float(h.get("value", 0)) < min_value:
+            continue
+        groups.setdefault((h["condition_id"], h["outcome"]), []).append(h)
+    out = []
+    for (cid, outcome), hs in groups.items():
+        wallets = sorted({h["wallet"] for h in hs})
+        if len(wallets) < min_wallets:
+            continue
+        total = sum(h["value"] for h in hs)
+        avg_entry = (sum(h["avg_price"] * h["value"] for h in hs) / total
+                     if total > 0 else 0.0)
+        out.append({"condition_id": cid, "outcome": outcome,
+                    "wallets": wallets, "avg_entry": avg_entry,
+                    "total_value": total})
+    out.sort(key=lambda c: -c["total_value"])
+    return out
 
 
 def pick_candidates(signals: list[dict[str, Any]], scores: dict[str, float],
@@ -103,9 +156,14 @@ class CopyTradingStrategy:
         self.base_pct = float(cfg.get("base_pct_per_trade", 0.03))
         self.max_slippage = float(cfg.get("max_slippage_pct", 0.10))
 
+    @property
+    def blacklist(self) -> set[str]:
+        return {w.lower() for w in self.cfg.get("wallet_blacklist") or []}
+
     def _wallet_scores(self) -> dict[str, float]:
         return {r["wallet"]: r["score"] for r in self.conn.execute(
-            "SELECT wallet, score FROM wallet_ranking WHERE passed_filters = 1")}
+            "SELECT wallet, score FROM wallet_ranking WHERE passed_filters = 1")
+            if r["wallet"] not in self.blacklist}
 
     def _unprocessed_signals(self) -> list[sqlite3.Row]:
         return self.conn.execute(
@@ -180,6 +238,67 @@ class CopyTradingStrategy:
         if fill.status == "FILLED":
             return f"{cand.title[:60]} — {reason}"
         return None
+
+    async def check_holdings_consensus(self) -> list[str]:
+        """Entradas por consenso de posiciones sostenidas (rutina diaria)."""
+        hc_cfg = self.cfg.get("holdings_consensus") or {}
+        if not (self.enabled and hc_cfg.get("enabled")):
+            return []
+        allowed_cats = set(hc_cfg.get("categories") or [])
+        max_entry = float(hc_cfg.get("max_entry_price", 0.90))
+        scores = self._wallet_scores()
+
+        holdings = [
+            {"wallet": r["wallet"], "condition_id": r["condition_id"],
+             "outcome": r["outcome"] or "", "value": r["value_usdc"] or 0.0,
+             "avg_price": r["avg_price"] or 0.0}
+            for r in self.conn.execute("SELECT * FROM wallet_positions")
+            if r["wallet"] in scores  # solo wallets rankeadas y no blacklisteadas
+        ]
+        executed = []
+        for cand in pick_holdings_consensus(holdings, hc_cfg):
+            market = self.conn.execute(
+                "SELECT * FROM markets WHERE condition_id = ? AND active = 1",
+                (cand["condition_id"],)).fetchone()
+            if not market or market["category"] not in allowed_cats:
+                continue
+            idx = _outcome_index(market, cand["outcome"])
+            if idx is None:
+                continue
+            cur_price = self.broker.mark_price(
+                cand["condition_id"], idx, cand["avg_entry"])
+            if cur_price > max_entry or not slippage_ok(
+                    cand["avg_entry"], cur_price, self.max_slippage):
+                continue
+            import json as _json
+            tokens = _json.loads(market["clob_token_ids"] or "[]")
+            if idx >= len(tokens):
+                continue
+            leader = max(cand["wallets"], key=lambda w: scores.get(w, 0))
+            equity = self.broker.equity()
+            confidence = min(scores.get(leader, 0.5), 1.0)
+            size = equity * self.base_pct * confidence / max(cur_price, 0.01)
+            names = ", ".join(w[:8] for w in cand["wallets"])
+            reason = (f"consenso de posiciones: {len(cand['wallets'])} wallets "
+                      f"top [{names}] sostienen {cand['outcome']} "
+                      f"(${cand['total_value']:,.0f}) desde ~{cand['avg_entry']:.3f}")
+            fill = await self.broker.execute(
+                f"consensus:{cand['condition_id']}:{idx}",
+                OrderRequest(
+                    strategy=self.name, condition_id=cand["condition_id"],
+                    category=market["category"], token_id=tokens[idx],
+                    outcome=cand["outcome"], outcome_index=idx, side="BUY",
+                    size=size,
+                    price=min(cur_price * (1 + self.max_slippage), 0.99),
+                    reason=reason, strategy_budget_pct=self.budget_pct,
+                    copied_wallet=leader,
+                    meta={"question": market["question"],
+                          "copied_wallet": leader,
+                          "copied_entry_price": cand["avg_entry"],
+                          "consensus_wallets": cand["wallets"]}))
+            if fill.status == "FILLED":
+                executed.append(f"{market['question'][:60]} — {reason}")
+        return executed
 
     async def check_exits(self) -> list[str]:
         """Vende posiciones cuya wallet copiada salió o redujo >50%."""

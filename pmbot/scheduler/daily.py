@@ -95,6 +95,7 @@ class DailyRoutine:
         moves["liquidadas"] = await self.settle_resolved()
         moves["salidas"] = await self.app.copy_trading.check_exits()
         moves["copias"] = await self.app.copy_trading.process_signals()
+        moves["consenso"] = await self.app.copy_trading.check_holdings_consensus()
         moves["arbitrajes"] = await self.app.arbitrage.scan_and_execute()
         self.app.broker.snapshot_equity()
         return moves

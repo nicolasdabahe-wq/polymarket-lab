@@ -103,5 +103,19 @@ strategies:
     strong_score: 0.70        # una sola wallet dispara si score>=0.70
     strong_usdc: 2000         # ... y entró con >= 2000 USDC
     confirm_count: 2          # o si >=2 wallets calificadas coinciden
+    # Wallets que NUNCA se copian, aunque pasen los filtros de score.
+    # Backtest 2026-08-21: copiarlas dio retorno negativo sostenido.
+    wallet_blacklist:
+      - "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee"  # kch123: -19.7% en 38d, WR 48%
+      - "0x17db3fcd93ba12d38382a0cade24b200185c5f6d"  # fengdubiying: sin evidencia positiva
+    # Consenso de posiciones (rutina diaria): entrar cuando >=N wallets top
+    # SOSTIENEN la misma posición grande en mercados lentos, aunque no
+    # hayamos visto el trade en vivo. Complementa la copia en tiempo real.
+    holdings_consensus:
+      enabled: true
+      min_wallets: 2
+      min_value_usdc: 5000        # posición mínima de cada wallet
+      categories: [politics, economy, geopolitics, crypto]  # nada de deportes en vivo
+      max_entry_price: 0.90
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
