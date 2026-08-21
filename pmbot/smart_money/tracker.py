@@ -71,7 +71,9 @@ class WalletTracker:
         async def one(wallet: str) -> None:
             async with sem:
                 try:
-                    activity = await self.api.activity(wallet, limit=50)
+                    # 150 y no 50: en deportes una wallet puede hacer decenas
+                    # de fills entre polls y perderíamos las señales grandes.
+                    activity = await self.api.activity(wallet, limit=150)
                 except Exception as exc:
                     log.warning("actividad de %s falló: %s", wallet, exc)
                     return

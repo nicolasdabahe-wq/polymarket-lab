@@ -132,6 +132,25 @@ class GammaClient:
         log.info("Gamma: %d mercados activos cacheados", len(result))
         return result
 
+    async def fetch_market(self, condition_id: str) -> Market | None:
+        """Trae un mercado puntual (para oportunidades fuera del top de
+        volumen: las ballenas tienen posiciones grandes en mercados de
+        resolución lejana que no entran en el cache diario)."""
+        try:
+            rows = await self.http.get_json(
+                f"{GAMMA_BASE}/markets", params={"condition_ids": condition_id})
+        except Exception:
+            return None
+        if not rows:
+            return None
+        m = rows[0]
+        if m.get("closed") or not m.get("active"):
+            return None
+        # Sin tags disponibles en este endpoint: se infiere del texto.
+        text = f"{m.get('question','')} {m.get('slug','')}"
+        category = categorize_tags([{"label": text}])
+        return _parse_market(m, category)
+
     async def market_status(self, condition_id: str) -> dict[str, Any] | None:
         """Estado actual de un mercado puntual (para liquidar posiciones):
         {'closed': bool, 'outcome_prices': [float, ...]} o None si no existe."""

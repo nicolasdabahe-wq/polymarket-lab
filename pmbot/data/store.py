@@ -45,6 +45,31 @@ class MarketStore:
             )
         return len(markets)
 
+    def upsert_one(self, market: Market) -> None:
+        """Inserta/actualiza un mercado sin tocar el resto del cache."""
+        now = _now()
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO markets (condition_id, gamma_id, slug, question,
+                    category, end_date, liquidity, volume_24h, yes_price,
+                    best_bid, best_ask, clob_token_ids, active, raw, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(condition_id) DO UPDATE SET
+                     question=excluded.question, category=excluded.category,
+                     end_date=excluded.end_date, liquidity=excluded.liquidity,
+                     volume_24h=excluded.volume_24h,
+                     yes_price=excluded.yes_price, best_bid=excluded.best_bid,
+                     best_ask=excluded.best_ask,
+                     clob_token_ids=excluded.clob_token_ids,
+                     active=excluded.active, raw=excluded.raw,
+                     updated_at=excluded.updated_at""",
+                (market.condition_id, market.gamma_id, market.slug,
+                 market.question, market.category, market.end_date,
+                 market.liquidity, market.volume_24h, market.yes_price,
+                 market.best_bid, market.best_ask,
+                 to_json(market.clob_token_ids), int(market.active),
+                 to_json(market.raw), now))
+
     def active_markets(self, category: str | None = None,
                        limit: int = 1000) -> list[sqlite3.Row]:
         sql = "SELECT * FROM markets WHERE active = 1"

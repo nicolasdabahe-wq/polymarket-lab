@@ -194,9 +194,12 @@ class CopyTradingStrategy:
     name = "copy_trading"
 
     def __init__(self, conn: sqlite3.Connection, broker: PaperBroker,
-                 cfg: dict[str, Any]) -> None:
+                 cfg: dict[str, Any], gamma: Any = None,
+                 market_store: Any = None) -> None:
         self.conn = conn
         self.broker = broker
+        self.gamma = gamma
+        self.market_store = market_store
         self.cfg = cfg
         self.enabled = bool(cfg.get("enabled", True))
         self.budget_pct = float(cfg.get("budget_pct", 0.50))
@@ -336,12 +339,21 @@ class CopyTradingStrategy:
             market = self.conn.execute(
                 "SELECT * FROM markets WHERE condition_id = ? AND active = 1",
                 (cand["condition_id"],)).fetchone()
-            if not market or market["category"] not in allowed_cats:
+            if not market and self.gamma is not None:
+                # Mercado fuera del cache de volumen: traerlo bajo demanda.
+                fetched = await self.gamma.fetch_market(cand["condition_id"])
+                if fetched:
+                    self.market_store.upsert_one(fetched)
+                    market = self.conn.execute(
+                        "SELECT * FROM markets WHERE condition_id = ?",
+                        (cand["condition_id"],)).fetchone()
+            if not market:
                 continue
-            # Deportes: solo ANTES del inicio. Durante el partido el precio
-            # se mueve con el juego y copiar con retraso es perder.
-            if (market["category"] == "sports"
-                    and hc_cfg.get("sports_only_prematch", True)
+            # El filtro real no es la categoría sino si el evento ya empezó:
+            # en vivo el precio se mueve con el juego y copiar tarde es perder.
+            if allowed_cats and market["category"] not in allowed_cats:
+                continue
+            if (hc_cfg.get("sports_only_prematch", True)
                     and not market_not_started(market)):
                 continue
             idx = _outcome_index(market, cand["outcome"])

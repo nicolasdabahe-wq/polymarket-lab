@@ -16,6 +16,7 @@
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot validate-wallets   # backtestea el ranking y habilita a quién copiar
+  python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -380,6 +381,7 @@ def main() -> None:
     sub.add_parser("notify-test")
     sub.add_parser("test-trade")
     sub.add_parser("validate-wallets")
+    sub.add_parser("diagnose")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -424,6 +426,9 @@ def main() -> None:
                 await cmd_notify_test(app)
             elif args.command == "test-trade":
                 await cmd_test_trade(app)
+            elif args.command == "diagnose":
+                from .diagnose import diagnose
+                await diagnose()
             elif args.command == "validate-wallets":
                 await cmd_validate_wallets(app)
             elif args.command == "set-baseline":
