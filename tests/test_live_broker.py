@@ -150,3 +150,42 @@ def test_live_clob_error_recorded_not_raised(tmp_path):
     fake.post_order = boom
     fill = asyncio.run(broker.execute("o1", req()))
     assert fill.status == "REJECTED" and "CLOB" in fill.detail
+
+
+# --- cuantización de tamaño (el CLOB exige montos con <=2 decimales) ---
+
+from pmbot.execution.live import quantize_size, tick_decimals
+
+
+def test_tick_decimals():
+    assert tick_decimals(0.01) == 2
+    assert tick_decimals(0.001) == 3
+    assert tick_decimals(0.0001) == 4
+
+
+def test_quantize_with_cent_tick_gives_whole_shares():
+    # 19.3 x 0.51 = 9.843 -> rechazado por el CLOB; 19 x 0.51 = 9.69 -> OK
+    size = quantize_size(19.3, 0.01, 5.0)
+    assert size == 19.0
+    assert round(size * 0.51, 10) == 9.69
+
+
+def test_quantize_with_milli_tick_needs_multiples_of_ten():
+    size = quantize_size(97.0, 0.001, 5.0)
+    assert size == 90.0
+    assert round(size * 0.512, 10) == 46.08   # 2 decimales exactos
+
+
+def test_quantize_below_minimum_returns_zero():
+    assert quantize_size(4.9, 0.01, 5.0) == 0.0
+    assert quantize_size(9.0, 0.001, 5.0) == 0.0  # 9 -> 0 tras cuantizar
+
+
+def test_quantized_amounts_always_two_decimals():
+    for size, tick, price in ((19.3, 0.01, 0.51), (6.8, 0.01, 0.99),
+                              (7.84, 0.01, 0.96), (123.4, 0.001, 0.425)):
+        q = quantize_size(size, tick, 5.0)
+        if q <= 0:
+            continue
+        amount = q * price
+        assert abs(amount * 100 - round(amount * 100)) < 1e-6, (size, tick, price)

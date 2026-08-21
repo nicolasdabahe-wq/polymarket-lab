@@ -50,6 +50,27 @@ def round_to_tick(price: float, tick: float, side: str) -> float:
     return round(rounded * tick, 6)
 
 
+def tick_decimals(tick: float) -> int:
+    """Cantidad de decimales del tick (0.01 -> 2, 0.001 -> 3)."""
+    if tick <= 0:
+        return 2
+    return max(0, min(6, round(-math.log10(tick))))
+
+
+def quantize_size(size: float, tick: float, min_shares: float) -> float:
+    """Ajusta el tamaño para que (size * price) tenga como mucho 2 decimales.
+
+    El CLOB rechaza la orden si el monto en USDC lleva más precisión:
+    'maker amount supports a max accuracy of 2 decimals'. Con el precio ya
+    cuantizado al tick, basta con que el tamaño sea múltiplo de
+    10^(decimales_del_tick - 2): con tick 0.01 son shares enteras, con
+    tick 0.001 múltiplos de 10, etc.
+    """
+    step = 10 ** max(0, tick_decimals(tick) - 2)
+    quantized = math.floor(size / step) * step
+    return float(quantized) if quantized >= min_shares else 0.0
+
+
 def parse_post_response(resp: dict[str, Any], side: str, req_size: float,
                         limit_price: float) -> tuple[float, float, str]:
     """(shares llenadas, precio promedio, error) desde la respuesta del CLOB.
@@ -201,12 +222,16 @@ class LiveBroker(PaperBroker):
         client = self.client()
         tick_str = client.get_tick_size(request.token_id) or "0.01"
         tick = float(tick_str)
-        price = round_to_tick(request.price, tick, request.side)
+        price = round(round_to_tick(request.price, tick, request.side),
+                      tick_decimals(tick))
         if request.side == "SELL" and price <= 0:
             price = tick  # venta "a mercado": límite en el mínimo posible
-        size = math.floor(request.size * 100) / 100
-        if size < MIN_SHARES:
-            return Fill("", "REJECTED", detail="tamaño < mínimo tras redondeo")
+        # El monto en USDC (size*price) admite 2 decimales como máximo.
+        size = quantize_size(request.size, tick, MIN_SHARES)
+        if size <= 0:
+            return Fill("", "REJECTED",
+                        detail=f"tamaño {request.size:.2f} < mínimo tras "
+                               f"cuantizar al tick {tick_str}")
 
         if neg_risk is None:
             neg_risk = bool(client.get_neg_risk(request.token_id))
