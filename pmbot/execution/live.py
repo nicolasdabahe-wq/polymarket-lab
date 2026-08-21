@@ -190,6 +190,7 @@ class LiveBroker(PaperBroker):
                 applied = self._apply_sell(request, fill.size, fill.price,
                                            fill.usdc, fill.fee)
             applied.order_id = order_id
+            applied.sent = fill.sent
             fill = applied
         fill.order_id = order_id
         result = self._record(order_id, request, fill)
@@ -270,12 +271,12 @@ class LiveBroker(PaperBroker):
             shares, avg_price = self._resolve_delayed(
                 client, resp["orderID"], price)
             if shares <= 0:
-                return Fill("", "NO_LIQUIDITY",
+                return Fill("", "NO_LIQUIDITY", sent=True,
                             detail=f"sin fill tras delay ({resp.get('status')})")
         if shares <= 0:
-            return Fill("", "NO_LIQUIDITY", detail=error)
+            return Fill("", "NO_LIQUIDITY", detail=error, sent=True)
         usdc = shares * avg_price
-        return Fill("", "FILLED", shares, avg_price, usdc, fee=0.0)
+        return Fill("", "FILLED", shares, avg_price, usdc, fee=0.0, sent=True)
 
     @staticmethod
     def _refresh_conditional(client: Any, token_id: str) -> None:
@@ -326,6 +327,33 @@ class LiveBroker(PaperBroker):
         self._balance_cache = None
         return fill
 
+    def _bot_shares(self, condition_id: str, outcome: str) -> float:
+        """Techo de lo que el bot puede reclamar como suyo en ese outcome:
+        lo que llenó, más lo que mandó al exchange sin fill confirmado (los
+        fills tardíos entran por ahí), menos lo vendido y lo liquidado.
+
+        Los rechazos de risk/ no cuentan: nunca salieron."""
+        row = self.conn.execute(
+            """SELECT COALESCE(SUM(CASE
+                   WHEN side = 'BUY' AND status = 'FILLED'
+                        THEN COALESCE(fill_size, 0)
+                   WHEN side = 'BUY' AND sent = 1 THEN req_size
+                   WHEN side IN ('SELL', 'REDEEM') AND status = 'FILLED'
+                        THEN -COALESCE(fill_size, 0)
+                   ELSE 0 END), 0) AS net
+               FROM orders WHERE condition_id = ? AND outcome = ?""",
+            (condition_id, outcome)).fetchone()
+        return max(0.0, float(row["net"] or 0.0))
+
+    def external_value(self) -> float:
+        """Valor de lo que hay on-chain y el bot no gestiona (posiciones del
+        dueño + payouts ganados sin cobrar). Lo recalcula reconcile_positions
+        cada pocos minutos; acá solo se lee el último valor conocido."""
+        row = self.conn.execute(
+            "SELECT value FROM paper_state WHERE key = 'external_positions_usdc'"
+        ).fetchone()
+        return float(row["value"]) if row else 0.0
+
     def starting_capital(self) -> float:
         """En real, la base del PnL es el equity observado la PRIMERA vez
         (no el capital configurado del paper): se fija una única vez."""
@@ -336,7 +364,7 @@ class LiveBroker(PaperBroker):
             return float(row["value"])
         # Equity crudo: portfolio_state() consulta este método, así que acá
         # se calcula directo para no entrar en recursión.
-        equity = self.cash + self.positions_value()
+        equity = self.cash + self.positions_value() + self.external_value()
         with self.conn:
             self.conn.execute(
                 """INSERT OR IGNORE INTO paper_state (key, value)
@@ -404,7 +432,12 @@ class LiveBroker(PaperBroker):
                    WHERE condition_id = ? AND outcome = ?""",
                 (pos.condition_id, pos.outcome)).fetchone()
             local_size = float(row["size"]) if row else 0.0
-            missing = pos.size - local_size
+            # El bot solo puede adoptar lo que compró ÉL. Si el dueño compró
+            # a mano en el mismo mercado, ese excedente es suyo: adoptarlo
+            # significaría venderle sus shares al salir de la copia.
+            bot_shares = self._bot_shares(pos.condition_id, pos.outcome)
+            target = min(pos.size, bot_shares)
+            missing = target - local_size
             if missing <= 0.01:
                 continue
             with self.conn:
@@ -412,7 +445,7 @@ class LiveBroker(PaperBroker):
                     self.conn.execute(
                         """UPDATE paper_positions SET size = ?, updated_at = ?
                            WHERE condition_id = ? AND outcome = ?""",
-                        (pos.size, _now(), pos.condition_id, pos.outcome))
+                        (target, _now(), pos.condition_id, pos.outcome))
                 else:
                     market = self.conn.execute(
                         "SELECT category FROM markets WHERE condition_id = ?",
@@ -425,7 +458,7 @@ class LiveBroker(PaperBroker):
                         (order["strategy"], pos.condition_id, pos.outcome,
                          pos.outcome_index, order["token_id"], pos.title,
                          market["category"] if market else "other",
-                         pos.size, pos.avg_price,
+                         target, pos.avg_price,
                          to_json({"question": pos.title, "adopted": True}),
                          _now(), _now()))
             note = (f"adoptada posición on-chain no registrada: {missing:.1f} u "
@@ -433,4 +466,31 @@ class LiveBroker(PaperBroker):
                     f"[{order['strategy']}]")
             log.warning("RECONCILIACIÓN: %s", note)
             notes.append(note)
+
+        self._refresh_external_value(onchain)
         return notes
+
+    def _refresh_external_value(self, onchain: list[Any]) -> None:
+        """Valor on-chain que el bot no gestiona: lo que compró el dueño por
+        su cuenta y los payouts ganados que aún no volvieron al saldo.
+
+        Sin esto, una apuesta manual del dueño le baja el saldo al bot sin
+        subirle ninguna posición: la leería como una pérdida y podría
+        dispararle el stop diario sin haber operado.
+        """
+        external = 0.0
+        for pos in onchain:
+            if pos.size <= 0.01:
+                continue
+            row = self.conn.execute(
+                """SELECT size FROM paper_positions
+                   WHERE condition_id = ? AND outcome = ?""",
+                (pos.condition_id, pos.outcome)).fetchone()
+            managed = float(row["size"]) if row else 0.0
+            external += max(0.0, pos.size - managed) * pos.cur_price
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO paper_state (key, value)
+                   VALUES ('external_positions_usdc', ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                (str(external),))

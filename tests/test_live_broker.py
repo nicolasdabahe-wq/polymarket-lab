@@ -241,3 +241,41 @@ def test_reconcile_does_not_readopt_settled_position(tmp_path):
     assert broker.positions() == []
     notes = asyncio.run(broker.reconcile_positions(FakeDataApi([onchain_pos()])))
     assert notes == [] and broker.positions() == []
+
+
+# --- convivencia con las apuestas manuales del dueño ---
+
+def test_manual_position_counts_in_equity(tmp_path):
+    """Una apuesta del dueño baja el saldo; si no se contara su valor, el
+    bot la leería como pérdida y podría dispararse el stop diario solo."""
+    broker, _ = make_live(tmp_path)
+    assert broker.equity() == pytest.approx(100.0)   # solo saldo
+    api = FakeDataApi([onchain_pos(condition_id="0xajeno", size=50.0,
+                                   cur_price=0.50)])
+    asyncio.run(broker.reconcile_positions(api))
+    assert broker.positions() == []                  # no la gestiona
+    assert broker.equity() == pytest.approx(125.0)   # pero sí la cuenta
+
+
+def test_manual_add_on_bot_market_is_not_adopted(tmp_path):
+    """El dueño compra en el mismo mercado que el bot: el excedente sigue
+    siendo suyo, el bot no puede venderlo al salir de la copia."""
+    broker, _ = make_live(tmp_path)
+    asyncio.run(broker.execute("o1", req()))          # el bot compra 15
+    api = FakeDataApi([onchain_pos(size=40.0, cur_price=0.50)])  # +25 del dueño
+    asyncio.run(broker.reconcile_positions(api))
+    [pos] = broker.positions()
+    assert pos["size"] == pytest.approx(15.0)
+    # el equity sí incluye las 25 shares del dueño (25 x 0.50)
+    assert broker.equity() == pytest.approx(100.0 + 15 * 0.50 + 12.5)
+
+
+def test_risk_rejected_order_gives_no_claim_on_shares(tmp_path):
+    """Una orden que risk/ frenó nunca salió al exchange: no puede
+    justificar la adopción de shares que compró el dueño."""
+    broker, fake = make_live(tmp_path)
+    fill = asyncio.run(broker.execute("o1", req(size=400, price=0.5)))
+    assert fill.status == "REJECTED" and fake.posted == []
+    api = FakeDataApi([onchain_pos(size=30.0, cur_price=0.50)])
+    assert asyncio.run(broker.reconcile_positions(api)) == []
+    assert broker.positions() == []

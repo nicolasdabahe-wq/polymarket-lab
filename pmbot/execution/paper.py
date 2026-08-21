@@ -35,6 +35,10 @@ class Fill:
     fee: float = 0.0
     realized_pnl: float | None = None
     detail: str = ""
+    # True solo si la orden llegó al exchange (aunque no llenara). Distingue
+    # un rechazo de risk/ —que nunca salió— de uno del CLOB, que sí pudo
+    # llenarse tarde en mercados con delay.
+    sent: bool = False
 
 
 def simulate_book_fill(levels: list[BookLevel], size: float,
@@ -120,6 +124,15 @@ class PaperBroker:
             p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
             for p in self.positions())
 
+    def external_value(self) -> float:
+        """Valor de las posiciones on-chain que el bot NO gestiona: las que
+        abrió el dueño por su cuenta y los payouts ya ganados que todavía no
+        volvieron al saldo. Suman al equity (son dinero suyo) pero no a la
+        exposición (el bot no las administra ni las vende).
+
+        En paper no existen: siempre 0."""
+        return 0.0
+
     def portfolio_state(self) -> PortfolioState:
         cash = self.cash
         by_market: dict[str, float] = {}
@@ -139,7 +152,7 @@ class PaperBroker:
             wallet = meta.get("copied_wallet")
             if wallet:
                 by_wallet[wallet] = by_wallet.get(wallet, 0) + value
-        equity = cash + positions_value
+        equity = cash + positions_value + self.external_value()
         return PortfolioState(
             equity=equity, cash=cash,
             day_start_equity=self.risk.day_start_equity(equity),
@@ -302,13 +315,15 @@ class PaperBroker:
                 """INSERT OR IGNORE INTO orders (id, strategy, condition_id,
                    token_id, outcome, outcome_index, side, req_size,
                    limit_price, status, fill_size, fill_price, fill_usdc,
-                   fee_usdc, realized_pnl, reason, reject_reason, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   fee_usdc, realized_pnl, reason, reject_reason, sent,
+                   created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (order_id, r.strategy, r.condition_id, r.token_id, r.outcome,
                  r.outcome_index, r.side, r.size, r.price, fill.status,
                  fill.size or None, fill.price or None, fill.usdc or None,
                  fill.fee or None, fill.realized_pnl, r.reason,
-                 fill.detail if fill.status != "FILLED" else None, _now()))
+                 fill.detail if fill.status != "FILLED" else None,
+                 int(fill.sent or fill.status == "FILLED"), _now()))
         return fill
 
 

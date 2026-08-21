@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS orders (
     realized_pnl  REAL,                -- solo SELL/REDEEM
     reason        TEXT,                -- por qué se operó (para el reporte)
     reject_reason TEXT,
+    sent          INTEGER NOT NULL DEFAULT 0,  -- llegó al exchange (sí/no)
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_orders_day ON orders(created_at);
@@ -182,6 +183,7 @@ CREATE TABLE IF NOT EXISTS equity_history (
 MIGRATIONS = [
     "ALTER TABLE signals ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE wallet_backtest ADD COLUMN min_usdc REAL",
+    "ALTER TABLE orders ADD COLUMN sent INTEGER NOT NULL DEFAULT 0",
 ]
 
 

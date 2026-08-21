@@ -141,8 +141,10 @@ async def cmd_portfolio(app: App) -> None:
     state = app.broker.portfolio_state()
     starting = app.broker.starting_capital()
     pnl = state.equity - starting
-    print(f"\n💰 Equity: ${state.equity:.2f}  (cash ${state.cash:.2f} + "
-          f"posiciones ${state.exposure_total:.2f})")
+    external = app.broker.external_value()
+    detalle = (f"cash ${state.cash:.2f} + bot ${state.exposure_total:.2f}"
+               + (f" + tuyo ${external:.2f}" if external > 0.01 else ""))
+    print(f"\n💰 Equity: ${state.equity:.2f}  ({detalle})")
     print(f"   PnL total: {pnl:+.2f} USDC ({pnl / starting:+.2%} sobre "
           f"${starting:.0f} iniciales)")
     if app.risk.kill_switch_on():
@@ -158,6 +160,10 @@ async def cmd_portfolio(app: App) -> None:
               f"{(p['question'] or '')[:50]}")
     if not positions:
         print("  (ninguna)")
+    if external > 0.01:
+        print(f"\nTuyo, fuera del bot: ${external:.2f} — posiciones que "
+              f"abriste vos y premios ganados sin cobrar.\n"
+              f"  El bot las cuenta en el equity pero no las toca.")
 
 
 async def cmd_validate_wallets(app: App) -> None:
