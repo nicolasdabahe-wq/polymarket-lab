@@ -96,8 +96,13 @@ scheduler:
   # 10 min es el óptimo: las carteras cambian lento y más frecuencia solo
   # provoca rate-limits (429) que frenan TODOS los polls con reintentos.
   holdings_consensus_minutes: 10
-  # Reconciliación con la blockchain (adopta fills tardíos).
+  # Reconciliación con la blockchain (adopta fills tardíos) y liquidación
+  # de mercados resueltos.
   reconcile_minutes: 5
+  # Minutos que el precio debe seguir clavado en ~0/~1 para dar un mercado
+  # por resuelto antes de que Gamma lo cierre (la resolución UMA tarda horas;
+  # en deportes el resultado se sabe al instante).
+  settle_confirm_minutes: 10
 
 telegram:
   # Con enabled: true pero sin token/chat_id en .env, degrada a log (no rompe).

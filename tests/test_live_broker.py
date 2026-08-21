@@ -189,3 +189,55 @@ def test_quantized_amounts_always_two_decimals():
             continue
         amount = q * price
         assert abs(amount * 100 - round(amount * 100)) < 1e-6, (size, tick, price)
+
+
+# --- reconciliación con la blockchain ---
+
+class FakeDataApi:
+    """Devuelve una posición on-chain fija (simula un fill tardío)."""
+    def __init__(self, positions):
+        self._positions = positions
+
+    async def positions(self, wallet, limit=50):
+        return self._positions
+
+
+def onchain_pos(**kw):
+    from pmbot.data.data_api import Position
+    base = dict(wallet="0xfunder", condition_id="0xm1", title="Fritz vs Naka",
+                outcome="Yes", outcome_index=0, size=15.0, avg_price=0.54,
+                cur_price=0.001, current_value=0.01, cash_pnl=-8.0,
+                percent_pnl=-1.0, redeemable=False)
+    base.update(kw)
+    return Position(**base)
+
+
+def test_reconcile_adopts_late_fill(tmp_path):
+    broker, fake = make_live(tmp_path)
+    # El bot intentó comprar (queda la orden) pero la dio por muerta.
+    fake.post_order = lambda order, order_type: {
+        "success": True, "status": "live", "makingAmount": "0",
+        "takingAmount": "0"}
+    asyncio.run(broker.execute("o1", req()))
+    assert broker.positions() == []
+    notes = asyncio.run(broker.reconcile_positions(FakeDataApi([onchain_pos()])))
+    assert notes and broker.positions()[0]["size"] == pytest.approx(15.0)
+
+
+def test_reconcile_ignores_foreign_positions(tmp_path):
+    broker, _ = make_live(tmp_path)
+    api = FakeDataApi([onchain_pos(condition_id="0xajeno")])
+    assert asyncio.run(broker.reconcile_positions(api)) == []
+    assert broker.positions() == []
+
+
+def test_reconcile_does_not_readopt_settled_position(tmp_path):
+    """Tras liquidar, los tokens siguen on-chain hasta el Claim del dueño:
+    la posición NO debe volver a adoptarse en cada reconciliación."""
+    broker, _ = make_live(tmp_path)
+    asyncio.run(broker.execute("o1", req()))
+    [pos] = broker.positions()
+    broker.redeem(pos, 0.0, "de facto resuelto")
+    assert broker.positions() == []
+    notes = asyncio.run(broker.reconcile_positions(FakeDataApi([onchain_pos()])))
+    assert notes == [] and broker.positions() == []

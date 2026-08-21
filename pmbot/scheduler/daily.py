@@ -25,6 +25,7 @@ from pathlib import Path
 
 from ..context import App
 from ..db import from_json
+from .settlement import decide_settlement
 
 log = logging.getLogger("pmbot.scheduler")
 
@@ -93,33 +94,101 @@ class DailyRoutine:
                 + "\n\nLa posición ya está registrada y el bot la gestiona.")
         return notes
 
+    # ---------- liquidación ----------
+
+    async def _onchain_prices(self) -> dict[tuple[str, int], tuple[float, bool]]:
+        """Precio actual y flag redimible de las posiciones on-chain.
+
+        Solo aplica al broker real; en paper devuelve vacío y la liquidación
+        usa únicamente Gamma.
+        """
+        wallet = getattr(self.app.broker, "proxy_address", None)
+        if not wallet:
+            return {}
+        try:
+            rows = await self.app.data_api.positions(wallet, limit=100)
+        except Exception as exc:
+            log.warning("liquidación: no se pudieron leer posiciones "
+                        "on-chain: %s", exc)
+            return {}
+        return {(r.condition_id, r.outcome_index): (r.cur_price, r.redeemable)
+                for r in rows}
+
+    def _pinned_since(self, key: str) -> datetime | None:
+        row = self.app.conn.execute(
+            "SELECT value FROM paper_state WHERE key = ?", (key,)).fetchone()
+        if not row:
+            return None
+        try:
+            return datetime.fromisoformat(row["value"])
+        except ValueError:
+            return None
+
+    def _save_pinned(self, key: str, value: datetime | None) -> None:
+        with self.app.conn:
+            if value is None:
+                self.app.conn.execute(
+                    "DELETE FROM paper_state WHERE key = ?", (key,))
+            else:
+                self.app.conn.execute(
+                    """INSERT INTO paper_state (key, value) VALUES (?, ?)
+                       ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                    (key, value.isoformat()))
+
     async def settle_resolved(self) -> list[str]:
-        """Liquida posiciones de mercados ya resueltos."""
+        """Liquida posiciones de mercados ya resueltos.
+
+        No basta con esperar a que Gamma marque closed: la resolución UMA
+        puede tardar horas y en deportes el resultado se sabe al instante.
+        Por eso también se liquida cuando el payout ya es redimible on-chain
+        o cuando el precio quedó clavado en ~0/~1 (ver settlement.py).
+        """
+        positions = list(self.app.broker.positions())
+        if not positions:
+            return []
+        onchain = await self._onchain_prices()
+        confirm = float(self.app.cfg.section("scheduler").get(
+            "settle_confirm_minutes", 10))
+        now = datetime.now(timezone.utc)
         settled: list[str] = []
-        for pos in list(self.app.broker.positions()):
-            try:
-                status = await self.app.gamma.market_status(pos["condition_id"])
-            except Exception as exc:
-                log.warning("status de %s falló: %s",
-                            pos["condition_id"][:10], exc)
-                continue
-            if not status or not status["closed"]:
-                continue
-            prices = status["outcome_prices"]
+        won = False
+        for pos in positions:
+            cid = pos["condition_id"]
             idx = pos["outcome_index"] or 0
-            if idx >= len(prices):
+            try:
+                status = await self.app.gamma.market_status(cid)
+            except Exception as exc:
+                log.warning("status de %s falló: %s", cid[:10], exc)
+                status = None
+            price, redeemable = onchain.get((cid, idx), (None, False))
+            key = f"pinned:{cid}:{idx}"
+            decision = decide_settlement(
+                gamma_closed=bool(status and status["closed"]),
+                gamma_prices=(status or {}).get("outcome_prices"),
+                outcome_index=idx,
+                onchain_price=price,
+                onchain_redeemable=redeemable,
+                pinned_since=self._pinned_since(key),
+                now=now, confirm_minutes=confirm)
+            self._save_pinned(key, decision.pinned_since)
+            if decision.payout is None:
                 continue
-            payout = prices[idx]
             fill = self.app.broker.redeem(
-                pos, payout, f"mercado resuelto (payout {payout:g})")
+                pos, decision.payout,
+                f"{decision.reason} (payout {decision.payout:g})")
             if fill.status == "FILLED":
-                settled.append(f"{(pos['question'] or '')[:60]} — resuelto a "
-                               f"{payout:g}, PnL {fill.realized_pnl:+.2f}")
+                won = won or decision.payout > 0
+                settled.append(f"{(pos['question'] or '')[:60]} — "
+                               f"{decision.reason}, PnL {fill.realized_pnl:+.2f}")
         if settled:
-            emoji = "🏆" if any("+" in s for s in settled) else "📕"
-            await self.app.notifier.send(
-                f"{emoji} Mercado(s) resuelto(s):\n"
-                + "\n".join(f"• {s}" for s in settled))
+            emoji = "🏆" if won else "📕"
+            msg = (f"{emoji} Mercado(s) resuelto(s):\n"
+                   + "\n".join(f"• {s}" for s in settled))
+            if won:
+                # El payout se cobra manualmente: el bot no puede reclamarlo.
+                msg += ("\n\n💵 Cobrá el premio en la app de Polymarket "
+                        "(botón Claim): hasta entonces no vuelve al saldo.")
+            await self.app.notifier.send(msg)
         return settled
 
     async def trade_cycle(self) -> dict[str, list[str]]:

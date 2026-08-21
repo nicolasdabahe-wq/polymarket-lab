@@ -391,6 +391,14 @@ class LiveBroker(PaperBroker):
                 (pos.condition_id,)).fetchone()
             if not order:
                 continue  # posición ajena al bot: no se toca
+            # Ya liquidada: los tokens siguen on-chain hasta que el dueño
+            # reclame el payout en la app, pero la posición está cerrada.
+            # Sin esto se re-adoptaría en cada reconciliación.
+            if self.conn.execute(
+                    """SELECT 1 FROM orders WHERE condition_id = ?
+                       AND outcome = ? AND side = 'REDEEM'""",
+                    (pos.condition_id, pos.outcome)).fetchone():
+                continue
             row = self.conn.execute(
                 """SELECT size FROM paper_positions
                    WHERE condition_id = ? AND outcome = ?""",
