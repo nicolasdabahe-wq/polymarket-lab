@@ -58,15 +58,19 @@ class FakeSignedOrder:
 
 
 class FakeClobClient:
-    """Simula py_clob_client.ClobClient: fill total a 0.50."""
+    """Simula py_clob_client_v2.ClobClient: fill total a 0.50."""
     def __init__(self):
         self.posted = []
 
     def get_tick_size(self, token_id):
-        return 0.01
+        return "0.01"  # V2 devuelve string
 
-    def create_order(self, args):
+    def get_neg_risk(self, token_id):
+        return False
+
+    def create_order(self, args, options=None):
         self.args = args
+        self.options = options
         return FakeSignedOrder()
 
     def post_order(self, order, order_type):

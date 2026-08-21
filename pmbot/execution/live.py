@@ -1,4 +1,7 @@
-"""Broker REAL contra el CLOB de Polymarket (py-clob-client).
+"""Broker REAL contra el CLOB V2 de Polymarket (py-clob-client-v2).
+
+Desde abril 2026 Polymarket opera CLOB V2: colateral pUSD (Polymarket USD),
+contratos de exchange nuevos y SDK nuevo. El SDK v1 quedó incompatible.
 
 Se activa SOLO si:
 - LIVE_TRADING=I_UNDERSTAND_THE_RISKS (valor exacto), y
@@ -86,16 +89,16 @@ class LiveBroker(PaperBroker):
     # ---------- cliente autenticado ----------
 
     def client(self) -> Any:
-        """Cliente autenticado L2, creado la primera vez que se necesita."""
+        """Cliente V2 autenticado L2, creado la primera vez que se necesita."""
         if self._client is None:
-            from py_clob_client.client import ClobClient
+            from py_clob_client_v2.client import ClobClient
             c = ClobClient(CLOB_HOST, chain_id=POLYGON_CHAIN_ID,
                            key=self._private_key,
                            signature_type=self._signature_type,
                            funder=self.proxy_address)
-            c.set_api_creds(c.create_or_derive_api_creds())
+            c.set_api_creds(c.create_or_derive_api_key())
             self._client = c
-            log.info("CLOB autenticado como %s (funder %s)",
+            log.info("CLOB V2 autenticado como %s (funder %s)",
                      c.get_address(), self.proxy_address)
         return self._client
 
@@ -103,14 +106,15 @@ class LiveBroker(PaperBroker):
 
     @property
     def cash(self) -> float:
-        """Saldo USDC real en el CLOB (cacheado unos segundos)."""
+        """Saldo pUSD real en el CLOB (cacheado unos segundos)."""
         now = time.monotonic()
         if self._balance_cache and now - self._balance_cache[0] < BALANCE_CACHE_SECONDS:
             return self._balance_cache[1]
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        from py_clob_client_v2.clob_types import (AssetType,
+                                                  BalanceAllowanceParams)
         raw = self.client().get_balance_allowance(
             BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
-        usdc = float(raw.get("balance") or 0) / 1e6  # USDC tiene 6 decimales
+        usdc = float(raw.get("balance") or 0) / 1e6  # pUSD tiene 6 decimales
         self._balance_cache = (now, usdc)
         return usdc
 
@@ -135,8 +139,11 @@ class LiveBroker(PaperBroker):
             return self._record(order_id, request,
                                 Fill(order_id, "REJECTED", detail=decision.reason))
 
+        # negRisk se resuelve acá (el conn de SQLite no es thread-safe);
+        # si no está en cache, el thread se lo pregunta al CLOB.
+        neg_risk = self._neg_risk_from_cache(request)
         try:
-            fill = await asyncio.to_thread(self._place_order, request)
+            fill = await asyncio.to_thread(self._place_order, request, neg_risk)
         except Exception as exc:
             log.exception("orden real falló")
             fill = Fill(order_id, "REJECTED", detail=f"error del CLOB: {exc}")
@@ -159,13 +166,30 @@ class LiveBroker(PaperBroker):
                  request.outcome, fill.status, fill.detail)
         return result
 
-    def _place_order(self, request: OrderRequest) -> Fill:
-        """Corre en thread: firma y postea la orden FAK al CLOB."""
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        from py_clob_client.order_builder.constants import BUY, SELL
+    def _neg_risk_from_cache(self, request: OrderRequest) -> bool | None:
+        """negRisk del mercado según el cache de Gamma (cambia el contrato
+        que firma la orden). None si el mercado no está cacheado."""
+        row = self.conn.execute(
+            "SELECT raw FROM markets WHERE condition_id = ?",
+            (request.condition_id,)).fetchone()
+        if row and row["raw"]:
+            import json as _json
+            try:
+                return bool(_json.loads(row["raw"]).get("negRisk"))
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    def _place_order(self, request: OrderRequest,
+                     neg_risk: bool | None = None) -> Fill:
+        """Corre en thread: firma y postea la orden FAK al CLOB V2."""
+        from py_clob_client_v2.clob_types import (OrderArgsV2, OrderType,
+                                                  PartialCreateOrderOptions)
+        from py_clob_client_v2.order_builder.constants import BUY, SELL
 
         client = self.client()
-        tick = float(client.get_tick_size(request.token_id) or 0.01)
+        tick_str = client.get_tick_size(request.token_id) or "0.01"
+        tick = float(tick_str)
         price = round_to_tick(request.price, tick, request.side)
         if request.side == "SELL" and price <= 0:
             price = tick  # venta "a mercado": límite en el mínimo posible
@@ -173,9 +197,12 @@ class LiveBroker(PaperBroker):
         if size < MIN_SHARES:
             return Fill("", "REJECTED", detail="tamaño < mínimo tras redondeo")
 
-        order = client.create_order(OrderArgs(
-            token_id=request.token_id, price=price, size=size,
-            side=BUY if request.side == "BUY" else SELL))
+        if neg_risk is None:
+            neg_risk = bool(client.get_neg_risk(request.token_id))
+        order = client.create_order(
+            OrderArgsV2(token_id=request.token_id, price=price, size=size,
+                        side=BUY if request.side == "BUY" else SELL),
+            PartialCreateOrderOptions(tick_size=tick_str, neg_risk=neg_risk))
         resp = client.post_order(order, OrderType.FAK)
         shares, avg_price, error = parse_post_response(
             resp, request.side, size, price)
@@ -197,7 +224,8 @@ class LiveBroker(PaperBroker):
 
     def check_connection(self) -> dict[str, Any]:
         """Para el comando live-check: auth, saldo y allowance."""
-        from py_clob_client.clob_types import AssetType, BalanceAllowanceParams
+        from py_clob_client_v2.clob_types import (AssetType,
+                                                  BalanceAllowanceParams)
         client = self.client()
         raw = client.get_balance_allowance(
             BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
