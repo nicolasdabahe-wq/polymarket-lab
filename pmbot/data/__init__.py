@@ -10,6 +10,8 @@ Fase 1 usa polling; el websocket del CLOB se integra en la fase de ejecución.
 from .gamma import GammaClient, Market
 from .clob import ClobClient
 from .data_api import DataApiClient
+from .prices import PriceFeed
 from .store import MarketStore
 
-__all__ = ["GammaClient", "Market", "ClobClient", "DataApiClient", "MarketStore"]
+__all__ = ["GammaClient", "Market", "ClobClient", "DataApiClient",
+           "PriceFeed", "MarketStore"]

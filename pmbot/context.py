@@ -5,7 +5,8 @@ import sqlite3
 from dataclasses import dataclass
 
 from .config import Config
-from .data import ClobClient, DataApiClient, GammaClient, MarketStore
+from .data import (ClobClient, DataApiClient, GammaClient, MarketStore,
+                   PriceFeed)
 from .db import connect
 from .execution import LiveBroker, PaperBroker
 from .http import HttpClient
@@ -13,7 +14,8 @@ from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
 from .risk import RiskManager
 from .smart_money import WalletScorer, WalletTracker
-from .strategies import ArbitrageStrategy, CopyTradingStrategy
+from .strategies import (ArbitrageStrategy, CopyTradingStrategy,
+                         CryptoValueStrategy)
 
 
 @dataclass
@@ -35,6 +37,7 @@ class App:
     broker: PaperBroker
     arbitrage: ArbitrageStrategy
     copy_trading: CopyTradingStrategy
+    crypto_value: CryptoValueStrategy
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -83,4 +86,6 @@ def build_app(cfg: Config) -> App:
                                     strategies_cfg.get("arbitrage") or {}),
         copy_trading=CopyTradingStrategy(conn, broker,
                                          strategies_cfg.get("copy_trading") or {}),
+        crypto_value=CryptoValueStrategy(conn, PriceFeed(http), broker,
+                                         strategies_cfg.get("crypto_value") or {}),
     )

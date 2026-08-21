@@ -35,6 +35,7 @@ class WalletStats:
     """Datos crudos por wallet antes de puntuar."""
     wallet: str
     username: str = ""
+    pnl_day: float = 0.0
     pnl_week: float = 0.0
     pnl_month: float = 0.0
     pnl_all: float = 0.0
@@ -66,6 +67,7 @@ def normalize_positive(value: float, best: float) -> float:
 def score_wallets(stats: list[WalletStats], weights: dict[str, float],
                   filters: dict[str, Any]) -> list[WalletScore]:
     """Puro y determinista: testeable sin red."""
+    best_day = max((s.pnl_day for s in stats), default=0.0)
     best_week = max((s.pnl_week for s in stats), default=0.0)
     best_month = max((s.pnl_month for s in stats), default=0.0)
     best_all = max((s.pnl_all for s in stats), default=0.0)
@@ -85,6 +87,7 @@ def score_wallets(stats: list[WalletStats], weights: dict[str, float],
         diversification = max(breadth * (1.0 - 0.5 * concentration_penalty), 0.0)
 
         components = {
+            "pnl_day": normalize_positive(s.pnl_day, best_day),
             "pnl_week": normalize_positive(s.pnl_week, best_week),
             "pnl_month": normalize_positive(s.pnl_month, best_month),
             "pnl_all": normalize_positive(s.pnl_all, best_all),
@@ -122,12 +125,13 @@ class WalletScorer:
 
     async def refresh_ranking(self) -> list[WalletScore]:
         limit = int(self.cfg.get("leaderboard_limit", 50))
-        week, month, all_time = await asyncio.gather(
+        day, week, month, all_time = await asyncio.gather(
+            self.api.leaderboard("day", limit),
             self.api.leaderboard("week", limit),
             self.api.leaderboard("month", limit),
             self.api.leaderboard("all", limit),
         )
-        stats = self._merge_leaderboards(week, month, all_time)
+        stats = self._merge_leaderboards(day, week, month, all_time)
         log.info("Leaderboard: %d wallets candidatas", len(stats))
 
         # Enriquecer con actividad/posiciones (concurrencia limitada para
@@ -149,7 +153,8 @@ class WalletScorer:
         return scored
 
     @staticmethod
-    def _merge_leaderboards(week: list[LeaderboardRow], month: list[LeaderboardRow],
+    def _merge_leaderboards(day: list[LeaderboardRow], week: list[LeaderboardRow],
+                            month: list[LeaderboardRow],
                             all_time: list[LeaderboardRow]) -> dict[str, WalletStats]:
         stats: dict[str, WalletStats] = {}
 
@@ -162,6 +167,8 @@ class WalletScorer:
                 s.username = row.username
             return s
 
+        for row in day:
+            get(row).pnl_day = row.pnl
         for row in week:
             get(row).pnl_week = row.pnl
         for row in month:

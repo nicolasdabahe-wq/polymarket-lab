@@ -97,6 +97,7 @@ class DailyRoutine:
         moves["copias"] = await self.app.copy_trading.process_signals()
         moves["consenso"] = await self.app.copy_trading.check_holdings_consensus()
         moves["arbitrajes"] = await self.app.arbitrage.scan_and_execute()
+        moves["valor_cripto"] = await self.app.crypto_value.scan_and_execute()
         self.app.broker.snapshot_equity()
         return moves
 
@@ -257,6 +258,11 @@ class DailyRoutine:
         if executed:
             await self.app.notifier.send(
                 "♻️ Arbitraje ejecutado:\n" + "\n".join(f"• {d}" for d in executed))
+        value_trades = await self.app.crypto_value.scan_and_execute()
+        if value_trades:
+            await self.app.notifier.send(
+                "📐 Valor cripto (modelo vs mercado):\n"
+                + "\n".join(f"• {d}" for d in value_trades))
 
 
 async def run_forever(app: App) -> None:

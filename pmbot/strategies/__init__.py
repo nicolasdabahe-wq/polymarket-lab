@@ -8,5 +8,6 @@ Fase 3: news_trading (intel validado por research/) y value vs. externos.
 """
 from .arbitrage import ArbitrageStrategy
 from .copy_trading import CopyTradingStrategy
+from .crypto_value import CryptoValueStrategy
 
-__all__ = ["ArbitrageStrategy", "CopyTradingStrategy"]
+__all__ = ["ArbitrageStrategy", "CopyTradingStrategy", "CryptoValueStrategy"]
