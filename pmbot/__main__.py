@@ -13,6 +13,7 @@
   python -m pmbot backtest-wallet W  # qué habría pasado copiando a W (o 'top')
   python -m pmbot live-check         # verificar conexión/saldo del modo real
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
+  python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -203,6 +204,62 @@ async def cmd_notify_test(app: App) -> None:
     print("Mensaje enviado — revisá tu Telegram.")
 
 
+async def cmd_test_trade(app: App) -> None:
+    """Compra 5 shares en un mercado líquido y las vende al instante.
+    Valida el circuito completo de órdenes reales; costo ~= el spread."""
+    import json as _json
+    from datetime import datetime, timezone
+    from .risk import OrderRequest
+
+    print(f"Modo: {app.cfg.mode} — orden de prueba mínima (5 shares)")
+    row = app.conn.execute(
+        """SELECT * FROM markets WHERE active = 1
+           AND yes_price BETWEEN 0.10 AND 0.60 AND volume_24h > 50000
+           AND clob_token_ids IS NOT NULL
+           ORDER BY volume_24h DESC LIMIT 1""").fetchone()
+    if not row:
+        print("No hay mercado apto en cache; corré primero: python -m pmbot markets")
+        return
+    tokens = _json.loads(row["clob_token_ids"])
+    book = await app.clob.order_book(tokens[0])
+    if not book.best_ask or not book.best_bid:
+        print("Book vacío, reintentá en un rato.")
+        return
+    print(f"Mercado: {row['question'][:60]}")
+    print(f"Book real: bid {book.best_bid:.3f} / ask {book.best_ask:.3f}")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    buy = await app.broker.execute(
+        f"livetest:{stamp}:buy",
+        OrderRequest(strategy="live_test", condition_id=row["condition_id"],
+                     category=row["category"], token_id=tokens[0],
+                     outcome="Yes", outcome_index=0, side="BUY", size=5.0,
+                     price=min(book.best_ask * 1.03, 0.99),
+                     reason="prueba de circuito: compra mínima"))
+    print(f"COMPRA → {buy.status} {buy.size:.1f} u @ {buy.price:.3f} "
+          f"(${buy.usdc:.2f}) {buy.detail}")
+    if buy.status != "FILLED":
+        return
+    sell = await app.broker.execute(
+        f"livetest:{stamp}:sell",
+        OrderRequest(strategy="live_test", condition_id=row["condition_id"],
+                     category=row["category"], token_id=tokens[0],
+                     outcome="Yes", outcome_index=0, side="SELL",
+                     size=buy.size, price=0.0,
+                     reason="prueba de circuito: venta inmediata"))
+    print(f"VENTA  → {sell.status} {sell.size:.1f} u @ {sell.price:.3f} "
+          f"(${sell.usdc:.2f}) {sell.detail}")
+    if sell.status == "FILLED" and sell.realized_pnl is not None:
+        print(f"\n✅ CIRCUITO COMPLETO VERIFICADO. Costo de la prueba "
+              f"(spread): {sell.realized_pnl:+.2f} USDC")
+        await app.notifier.send(
+            f"🧪 Prueba de circuito OK: compra y venta reales ejecutadas en "
+            f"'{row['question'][:50]}' (costo {sell.realized_pnl:+.2f} USDC)")
+    else:
+        print("\n⚠️ La compra funcionó pero la venta no llenó — la posición "
+              "de 5 shares queda abierta (podés venderla desde la app).")
+
+
 async def cmd_backtest(app: App, wallet: str, days: int, stake: float,
                        min_copy: float) -> None:
     from .backtest import CopyBacktester
@@ -256,6 +313,7 @@ def main() -> None:
                       help="tamaño mínimo del trade de la wallet para copiarlo")
     sub.add_parser("live-check")
     sub.add_parser("notify-test")
+    sub.add_parser("test-trade")
     sub.add_parser("run")
     args = parser.parse_args()
 
@@ -296,6 +354,8 @@ def main() -> None:
                 await cmd_live_check(app)
             elif args.command == "notify-test":
                 await cmd_notify_test(app)
+            elif args.command == "test-trade":
+                await cmd_test_trade(app)
             elif args.command == "run":
                 await run_forever(app)
         finally:
