@@ -1,0 +1,14 @@
+services:
+  pmbot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - pmbot-data:/data
+    # Para inspeccionar: docker compose exec pmbot python -m pmbot briefing
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+volumes:
+  pmbot-data:

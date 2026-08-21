@@ -1,0 +1,78 @@
+# Configuración del bot. Las claves/secretos van en .env, nunca aquí.
+
+capital:
+  # Capital inicial simulado en modo paper (USDC).
+  paper_starting_usdc: 500.0
+
+data:
+  # Mercados a cachear por corrida (ordenados por volumen 24h desc).
+  max_markets: 600
+  page_size: 100
+  # Ignorar mercados con liquidez menor a esto (USDC).
+  min_liquidity: 500.0
+
+smart_money:
+  # Cuántas filas del leaderboard traer por ventana.
+  leaderboard_limit: 50
+  # Pesos del score compuesto (deben sumar ~1.0 junto con roi/diversificación).
+  weights:
+    pnl_week: 0.15
+    pnl_month: 0.35
+    pnl_all: 0.20
+    roi: 0.15
+    diversification: 0.15
+  # Filtros duros: wallets que no los pasan quedan fuera del ranking.
+  filters:
+    min_trades: 20          # nº mínimo de operaciones históricas visibles
+    min_distinct_markets: 5 # descarta "one-trick ponies" / posibles insiders
+    min_account_age_days: 30
+  # Cuántas wallets del ranking final monitorear de cerca.
+  top_n: 15
+  # Máximo de posiciones a listar por wallet.
+  positions_per_wallet: 25
+
+intel:
+  # Feeds RSS a vigilar. category debe coincidir con las categorías de mercados.
+  feeds:
+    - {name: BBC World,        url: "https://feeds.bbci.co.uk/news/world/rss.xml",                          category: geopolitics}
+    - {name: BBC Politics,     url: "https://feeds.bbci.co.uk/news/politics/rss.xml",                      category: politics}
+    - {name: NYT Politics,     url: "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",           category: politics}
+    - {name: NYT World,        url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",              category: geopolitics}
+    - {name: NYT Economy,      url: "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",            category: economy}
+    - {name: The Guardian US,  url: "https://www.theguardian.com/us-news/rss",                              category: politics}
+    - {name: The Guardian World, url: "https://www.theguardian.com/world/rss",                              category: geopolitics}
+    - {name: CNBC Economy,     url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", category: economy}
+    - {name: CoinDesk,         url: "https://www.coindesk.com/arc/outboundfeeds/rss/",                      category: crypto}
+    - {name: ESPN Top,         url: "https://www.espn.com/espn/rss/news",                                   category: sports}
+  # Máx. ítems nuevos a procesar por feed y por corrida.
+  max_items_per_feed: 20
+  # Antigüedad máxima de una noticia para analizarla (horas).
+  max_age_hours: 36
+  llm:
+    enabled: true
+    model: claude-opus-5
+    effort: low            # análisis de noticias no necesita razonamiento máximo
+    # Máx. noticias a analizar con LLM por corrida (control de costos).
+    max_news_per_run: 20
+    # Máx. mercados candidatos que se le muestran al LLM por noticia.
+    candidate_markets: 8
+
+scheduler:
+  # Hora UTC de la rutina diaria completa (HH:MM).
+  daily_run_utc: "11:00"
+  # Polls intradía (minutos).
+  intel_poll_minutes: 30
+  smart_money_poll_minutes: 15
+  markets_refresh_minutes: 30
+
+telegram:
+  enabled: false
+
+risk:
+  # Fase 1 (solo lectura) no opera; estos límites ya quedan definidos para
+  # las fases siguientes y los tests.
+  max_pct_per_market: 0.10
+  max_pct_per_copied_wallet: 0.15
+  max_pct_per_category: 0.40
+  max_total_exposure_pct: 0.80
+  daily_stop_loss_pct: 0.05
