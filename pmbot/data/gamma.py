@@ -132,6 +132,21 @@ class GammaClient:
         log.info("Gamma: %d mercados activos cacheados", len(result))
         return result
 
+    async def market_status(self, condition_id: str) -> dict[str, Any] | None:
+        """Estado actual de un mercado puntual (para liquidar posiciones):
+        {'closed': bool, 'outcome_prices': [float, ...]} o None si no existe."""
+        rows = await self.http.get_json(
+            f"{GAMMA_BASE}/markets", params={"condition_ids": condition_id})
+        if not rows:
+            return None
+        m = rows[0]
+        try:
+            prices = [float(p) for p in json.loads(m.get("outcomePrices") or "[]")]
+        except (ValueError, TypeError):
+            prices = []
+        return {"closed": bool(m.get("closed")), "outcome_prices": prices,
+                "uma_status": m.get("umaResolutionStatus")}
+
     @staticmethod
     def _flatten(events: list[dict[str, Any]]) -> Iterator[Market]:
         for event in events:

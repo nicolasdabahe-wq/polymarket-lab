@@ -49,6 +49,7 @@ class Activity:
     condition_id: str
     title: str
     outcome: str
+    outcome_index: int
     price: float
     usdc_size: float
 
@@ -131,6 +132,7 @@ class DataApiClient:
                     condition_id=r.get("conditionId", ""),
                     title=r.get("title", ""),
                     outcome=r.get("outcome", "") or "",
+                    outcome_index=int(r.get("outcomeIndex") or 0),
                     price=float(r.get("price") or 0),
                     usdc_size=float(r.get("usdcSize") or 0),
                 ))

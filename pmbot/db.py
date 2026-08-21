@@ -98,16 +98,78 @@ CREATE TABLE IF NOT EXISTS paper_state (
     value TEXT NOT NULL
 );
 
--- Señales informativas detectadas (fase 1: solo se registran, no se opera).
+-- Señales detectadas. processed=1 cuando una estrategia ya las consumió.
 CREATE TABLE IF NOT EXISTS signals (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     source     TEXT NOT NULL,      -- 'smart_money' | 'intel'
     kind       TEXT NOT NULL,
     condition_id TEXT,
     payload    TEXT NOT NULL,      -- JSON
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    processed  INTEGER NOT NULL DEFAULT 0
+);
+
+-- Cuenta paper: una sola fila (id=1).
+CREATE TABLE IF NOT EXISTS paper_account (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    starting_usdc REAL NOT NULL,
+    cash_usdc     REAL NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
+-- Órdenes (paper en fase 2; el broker real reutilizará el mismo esquema).
+-- id es la clave de idempotencia: reintentos con el mismo id no duplican.
+CREATE TABLE IF NOT EXISTS orders (
+    id            TEXT PRIMARY KEY,
+    strategy      TEXT NOT NULL,
+    condition_id  TEXT NOT NULL,
+    token_id      TEXT,
+    outcome       TEXT,
+    outcome_index INTEGER,
+    side          TEXT NOT NULL,       -- BUY | SELL | REDEEM
+    req_size      REAL NOT NULL,       -- shares pedidas
+    limit_price   REAL,
+    status        TEXT NOT NULL,       -- FILLED | REJECTED | NO_LIQUIDITY
+    fill_size     REAL,
+    fill_price    REAL,                -- precio promedio del fill
+    fill_usdc     REAL,
+    fee_usdc      REAL,
+    realized_pnl  REAL,                -- solo SELL/REDEEM
+    reason        TEXT,                -- por qué se operó (para el reporte)
+    reject_reason TEXT,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_day ON orders(created_at);
+
+-- Posiciones paper propias.
+CREATE TABLE IF NOT EXISTS paper_positions (
+    strategy      TEXT NOT NULL,
+    condition_id  TEXT NOT NULL,
+    outcome       TEXT NOT NULL,
+    outcome_index INTEGER,
+    token_id      TEXT,
+    question      TEXT,
+    category      TEXT,
+    size          REAL NOT NULL,
+    avg_price     REAL NOT NULL,
+    meta          TEXT,               -- JSON (p.ej. wallet copiada y su precio)
+    opened_at     TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    PRIMARY KEY (strategy, condition_id, outcome)
+);
+
+CREATE TABLE IF NOT EXISTS equity_history (
+    ts              TEXT PRIMARY KEY,
+    cash_usdc       REAL NOT NULL,
+    positions_usdc  REAL NOT NULL,
+    equity_usdc     REAL NOT NULL
 );
 """
+
+# Migraciones idempotentes para bases creadas por versiones anteriores.
+MIGRATIONS = [
+    "ALTER TABLE signals ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+]
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -116,6 +178,11 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
+    for migration in MIGRATIONS:
+        try:
+            conn.execute(migration)
+        except sqlite3.OperationalError:
+            pass  # columna ya existe
     return conn
 
 

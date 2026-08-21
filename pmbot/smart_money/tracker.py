@@ -98,6 +98,7 @@ class WalletTracker:
                             ("smart_money", "new_trade", a.condition_id,
                              to_json({"wallet": a.wallet, "side": a.side,
                                       "title": a.title, "outcome": a.outcome,
+                                      "outcome_index": a.outcome_index,
                                       "price": a.price, "usdc": a.usdc_size,
                                       "ts": a.timestamp}), _now()))
                     new_trades.extend(fresh)

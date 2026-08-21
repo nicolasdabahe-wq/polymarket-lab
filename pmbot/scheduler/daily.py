@@ -1,18 +1,20 @@
 """Rutina diaria y loop 24/7.
 
-Fase 1 (solo lectura, paper):
+Fase 2 (paper trading):
 - Rutina diaria a hora fija (scheduler.daily_run_utc):
     1. refrescar mercados activos
-    2. refrescar ranking de wallets
-    3. snapshot de posiciones de las wallets top
-    4. bajar y analizar noticias
-    5. briefing diario por categoría
-    6. reporte del día -> reports/YYYY-MM-DD.md + Telegram (si está activo)
-- Intradía: polls de intel (noticias nuevas) y smart_money (trades nuevos de
-  wallets top). Solo registran señales; nadie opera todavía.
+    2. refrescar ranking de wallets y posiciones (top + copiadas)
+    3. bajar y analizar noticias; briefing por categoría
+    4. liquidar posiciones de mercados resueltos (redeem a 0/1)
+    5. rebalancear: salir de copias cuya wallet salió (tesis rota)
+    6. tomar oportunidades nuevas (copy + arbitraje) si pasan risk/
+       — si no hay ninguna que califique, NO se opera y se reporta
+    7. snapshot de equity y reporte -> reports/YYYY-MM-DD.md + Telegram
+- Intradía: polls de intel y smart_money; las señales de smart_money se
+  copian en tiempo real (con límite de slippage) y el arbitraje se escanea
+  en cada refresh de mercados.
 
-Las fases siguientes insertan aquí: research/, rebalanceo de posiciones y
-toma de oportunidades vía risk/ + execution/.
+Toda orden pasa por risk/ dentro del broker; el modo real no existe aún.
 """
 from __future__ import annotations
 
@@ -52,9 +54,50 @@ class DailyRoutine:
     async def refresh_smart_money(self) -> list[str]:
         await self.app.wallet_scorer.refresh_ranking()
         top = self.app.wallet_scorer.top_wallets()
-        wallets = [r["wallet"] for r in top]
-        await self.app.wallet_tracker.refresh_positions(wallets)
-        return wallets
+        wallets = {r["wallet"] for r in top}
+        # También refrescar las wallets que estamos copiando aunque hayan
+        # salido del top: la señal de salida depende de su snapshot.
+        for row in self.app.conn.execute(
+                "SELECT meta FROM paper_positions WHERE strategy='copy_trading'"):
+            meta = from_json(row["meta"]) or {}
+            if meta.get("copied_wallet"):
+                wallets.add(meta["copied_wallet"])
+        await self.app.wallet_tracker.refresh_positions(sorted(wallets))
+        return sorted(wallets)
+
+    async def settle_resolved(self) -> list[str]:
+        """Liquida posiciones de mercados ya resueltos."""
+        settled: list[str] = []
+        for pos in list(self.app.broker.positions()):
+            try:
+                status = await self.app.gamma.market_status(pos["condition_id"])
+            except Exception as exc:
+                log.warning("status de %s falló: %s",
+                            pos["condition_id"][:10], exc)
+                continue
+            if not status or not status["closed"]:
+                continue
+            prices = status["outcome_prices"]
+            idx = pos["outcome_index"] or 0
+            if idx >= len(prices):
+                continue
+            payout = prices[idx]
+            fill = self.app.broker.redeem(
+                pos, payout, f"mercado resuelto (payout {payout:g})")
+            if fill.status == "FILLED":
+                settled.append(f"{(pos['question'] or '')[:60]} — resuelto a "
+                               f"{payout:g}, PnL {fill.realized_pnl:+.2f}")
+        return settled
+
+    async def trade_cycle(self) -> dict[str, list[str]]:
+        """Rebalanceo + oportunidades nuevas. Devuelve movimientos por tipo."""
+        moves: dict[str, list[str]] = {}
+        moves["liquidadas"] = await self.settle_resolved()
+        moves["salidas"] = await self.app.copy_trading.check_exits()
+        moves["copias"] = await self.app.copy_trading.process_signals()
+        moves["arbitrajes"] = await self.app.arbitrage.scan_and_execute()
+        self.app.broker.snapshot_equity()
+        return moves
 
     async def refresh_intel(self) -> dict[str, str]:
         fetcher = self.app.news_fetcher
@@ -69,19 +112,61 @@ class DailyRoutine:
         n_markets = await self.refresh_markets()
         wallets = await self.refresh_smart_money()
         briefings = await self.refresh_intel()
-        report = self._build_report(n_markets, wallets, briefings)
+        moves = await self.trade_cycle()
+        report = self._build_report(n_markets, wallets, briefings, moves)
         self._write_report(report)
         await self.app.notifier.send(report)
         return report
 
     def _build_report(self, n_markets: int, wallets: list[str],
-                      briefings: dict[str, str]) -> str:
+                      briefings: dict[str, str],
+                      moves: dict[str, list[str]]) -> str:
         conn = self.app.conn
         today = datetime.now(timezone.utc).date().isoformat()
         lines = [f"📊 pmbot — reporte diario {today} [{self.app.cfg.mode}]", ""]
 
-        paper = float(self.app.cfg.section("capital").get("paper_starting_usdc", 0))
-        lines.append(f"Capital paper: {paper:.2f} USDC (sin posiciones: fase 1 es solo lectura)")
+        state = self.app.broker.portfolio_state()
+        starting = float(conn.execute(
+            "SELECT starting_usdc FROM paper_account WHERE id=1"
+        ).fetchone()["starting_usdc"])
+        total_pnl = state.equity - starting
+        lines.append(
+            f"💰 Equity: ${state.equity:.2f} (cash ${state.cash:.2f} + "
+            f"posiciones ${state.exposure_total:.2f}) | "
+            f"PnL total {total_pnl:+.2f} ({total_pnl / starting:+.1%})")
+        pnl_by_strategy = self._pnl_by_strategy(state)
+        if pnl_by_strategy:
+            lines.append("PnL por estrategia: " + " | ".join(
+                f"{s}: realizado {r:+.2f}, no realizado {u:+.2f}"
+                for s, (r, u) in sorted(pnl_by_strategy.items())))
+        lines.append("")
+
+        lines.append("🔁 Movimientos de hoy:")
+        any_move = False
+        for kind, items in moves.items():
+            for item in items:
+                any_move = True
+                lines.append(f"  [{kind}] {item}")
+        todays_orders = conn.execute(
+            """SELECT * FROM orders WHERE date(created_at)=? AND status='FILLED'
+               ORDER BY created_at""", (today,)).fetchall()
+        if not any_move and not todays_orders:
+            lines.append("  (sin oportunidades que superen los umbrales: hoy no se opera)")
+        lines.append("")
+
+        open_positions = self.app.broker.positions()
+        lines.append(f"📈 Posiciones abiertas ({len(open_positions)}):")
+        for p in open_positions[:15]:
+            mark = self.app.broker.mark_price(
+                p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
+            unreal = p["size"] * (mark - p["avg_price"])
+            lines.append(
+                f"  [{p['strategy']}] {p['outcome']:<4} {p['size']:.0f} u "
+                f"@ {p['avg_price']:.3f} → {mark:.3f} (PnL {unreal:+.2f})  "
+                f"{(p['question'] or '')[:50]}")
+        if not open_positions:
+            lines.append("  (ninguna)")
+        lines.append("")
         lines.append(f"Mercados activos cacheados: {n_markets}")
 
         cats = self.app.market_store.category_summary()
@@ -104,7 +189,7 @@ class DailyRoutine:
         new_signals = conn.execute(
             """SELECT COUNT(*) AS n FROM signals
                WHERE date(created_at) = ?""", (today,)).fetchone()["n"]
-        lines.append(f"Señales registradas hoy: {new_signals} (informativas; aún no se opera)")
+        lines.append(f"Señales registradas hoy: {new_signals}")
         lines.append("")
 
         lines.append("📰 Briefing por categoría:")
@@ -114,6 +199,22 @@ class DailyRoutine:
         if not briefings:
             lines.append("(sin noticias analizadas hoy)")
         return "\n".join(lines)
+
+    def _pnl_by_strategy(self, state) -> dict[str, tuple[float, float]]:
+        """{estrategia: (PnL realizado, PnL no realizado)}."""
+        out: dict[str, tuple[float, float]] = {}
+        for row in self.app.conn.execute(
+                """SELECT strategy, COALESCE(SUM(realized_pnl), 0) AS r
+                   FROM orders WHERE realized_pnl IS NOT NULL
+                   GROUP BY strategy"""):
+            out[row["strategy"]] = (row["r"], 0.0)
+        for p in self.app.broker.positions():
+            mark = self.app.broker.mark_price(
+                p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
+            unreal = p["size"] * (mark - p["avg_price"])
+            r, u = out.get(p["strategy"], (0.0, 0.0))
+            out[p["strategy"]] = (r, u + unreal)
+        return out
 
     def _write_report(self, report: str) -> Path:
         reports_dir = Path("reports")
@@ -138,6 +239,17 @@ class DailyRoutine:
         for t in trades:
             log.info("señal smart_money: %s %s '%s' @%.2f (%.0f USDC)",
                      t.wallet[:10], t.side, t.title[:50], t.price, t.usdc_size)
+        if trades:
+            # Copia en tiempo real: el precio se mueve rápido tras la entrada
+            # de una wallet grande, no esperamos a la rutina diaria.
+            copied = await self.app.copy_trading.process_signals()
+            for desc in copied:
+                log.info("COPIA intradía: %s", desc)
+
+    async def poll_arbitrage(self) -> None:
+        executed = await self.app.arbitrage.scan_and_execute()
+        for desc in executed:
+            log.info("ARB intradía: %s", desc)
 
 
 async def run_forever(app: App) -> None:
@@ -166,6 +278,7 @@ async def run_forever(app: App) -> None:
             if now >= next_markets:
                 next_markets = now + markets_every
                 await routine.refresh_markets()
+                await routine.poll_arbitrage()
             if now >= next_intel:
                 next_intel = now + intel_every
                 await routine.poll_intel()

@@ -6,6 +6,10 @@
   python -m pmbot news               # baja y analiza noticias pendientes
   python -m pmbot briefing           # briefing diario por categoría
   python -m pmbot daily              # rutina diaria completa (una vez)
+  python -m pmbot trade-cycle        # un ciclo de trading paper (settle/exits/entradas)
+  python -m pmbot portfolio          # equity, posiciones y PnL por estrategia
+  python -m pmbot trades             # últimas órdenes (llenadas y rechazadas)
+  python -m pmbot kill on|off        # kill switch manual (bloquea compras)
   python -m pmbot run                # loop 24/7 (scheduler)
 """
 from __future__ import annotations
@@ -109,6 +113,72 @@ async def cmd_daily(app: App) -> None:
     print("\n" + report)
 
 
+async def cmd_trade_cycle(app: App) -> None:
+    moves = await DailyRoutine(app).trade_cycle()
+    print()
+    any_move = False
+    for kind, items in moves.items():
+        for item in items:
+            any_move = True
+            print(f"[{kind}] {item}")
+    if not any_move:
+        print("Sin oportunidades que superen los umbrales; no se operó.")
+    await cmd_portfolio(app)
+
+
+async def cmd_portfolio(app: App) -> None:
+    state = app.broker.portfolio_state()
+    row = app.conn.execute(
+        "SELECT starting_usdc FROM paper_account WHERE id=1").fetchone()
+    starting = row["starting_usdc"]
+    pnl = state.equity - starting
+    print(f"\n💰 Equity: ${state.equity:.2f}  (cash ${state.cash:.2f} + "
+          f"posiciones ${state.exposure_total:.2f})")
+    print(f"   PnL total: {pnl:+.2f} USDC ({pnl / starting:+.2%} sobre "
+          f"${starting:.0f} iniciales)")
+    if app.risk.kill_switch_on():
+        print("   ⛔ KILL SWITCH ACTIVADO: compras bloqueadas")
+    positions = app.broker.positions()
+    print(f"\nPosiciones abiertas ({len(positions)}):")
+    for p in positions:
+        mark = app.broker.mark_price(p["condition_id"],
+                                     p["outcome_index"] or 0, p["avg_price"])
+        unreal = p["size"] * (mark - p["avg_price"])
+        print(f"  [{p['strategy']:<12}] {p['outcome']:<4} {p['size']:>8.0f} u "
+              f"@ {p['avg_price']:.3f} → {mark:.3f} | PnL {unreal:+8.2f}  "
+              f"{(p['question'] or '')[:50]}")
+    if not positions:
+        print("  (ninguna)")
+
+
+async def cmd_trades(app: App) -> None:
+    rows = app.conn.execute(
+        "SELECT * FROM orders ORDER BY created_at DESC LIMIT 25").fetchall()
+    print(f"\nÚltimas órdenes ({len(rows)}):")
+    for r in rows:
+        if r["status"] == "FILLED":
+            detail = (f"{r['fill_size']:.0f} u @ {r['fill_price']:.3f} "
+                      f"(${r['fill_usdc']:.2f})")
+            if r["realized_pnl"] is not None:
+                detail += f" PnL {r['realized_pnl']:+.2f}"
+        else:
+            detail = r["reject_reason"] or ""
+        print(f"  {r['created_at'][5:16]} [{r['strategy']:<12}] {r['side']:<6} "
+              f"{r['status']:<12} {detail}")
+        if r["reason"]:
+            print(f"      motivo: {r['reason'][:90]}")
+
+
+def cmd_kill(app: App, mode: str) -> None:
+    if mode == "on":
+        app.risk.kill_file.touch()
+        print("⛔ Kill switch ACTIVADO: no se abrirán posiciones nuevas "
+              "(las ventas siguen permitidas).")
+    else:
+        app.risk.kill_file.unlink(missing_ok=True)
+        print("✅ Kill switch desactivado.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="pmbot", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -119,6 +189,11 @@ def main() -> None:
     sub.add_parser("news")
     sub.add_parser("briefing")
     sub.add_parser("daily")
+    sub.add_parser("trade-cycle")
+    sub.add_parser("portfolio")
+    sub.add_parser("trades")
+    p_kill = sub.add_parser("kill")
+    p_kill.add_argument("mode", choices=["on", "off"])
     sub.add_parser("run")
     args = parser.parse_args()
 
@@ -143,6 +218,14 @@ def main() -> None:
                 await cmd_briefing(app)
             elif args.command == "daily":
                 await cmd_daily(app)
+            elif args.command == "trade-cycle":
+                await cmd_trade_cycle(app)
+            elif args.command == "portfolio":
+                await cmd_portfolio(app)
+            elif args.command == "trades":
+                await cmd_trades(app)
+            elif args.command == "kill":
+                cmd_kill(app, args.mode)
             elif args.command == "run":
                 await run_forever(app)
         finally:

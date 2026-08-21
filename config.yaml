@@ -69,10 +69,37 @@ telegram:
   enabled: false
 
 risk:
-  # Fase 1 (solo lectura) no opera; estos límites ya quedan definidos para
-  # las fases siguientes y los tests.
+  # Límites duros: ninguna orden (ni paper ni real) se ejecuta sin pasarlos.
   max_pct_per_market: 0.10
   max_pct_per_copied_wallet: 0.15
   max_pct_per_category: 0.40
   max_total_exposure_pct: 0.80
   daily_stop_loss_pct: 0.05
+  min_order_usdc: 1.0
+  # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
+  # toda compra nueva; las ventas siguen permitidas.
+
+execution:
+  # Fee taker en bps aplicado en la simulación (Polymarket hoy no cobra fee
+  # en la mayoría de mercados; subir si operás mercados con fee).
+  taker_fee_bps: 0
+
+strategies:
+  arbitrage:
+    enabled: true
+    budget_pct: 0.30          # máx fracción del equity en esta estrategia
+    min_edge: 0.02            # edge mínimo neto (2%) para entrar
+    max_usdc_per_trade: 40
+    scan_top_markets: 200
+  copy_trading:
+    enabled: true
+    budget_pct: 0.50
+    base_pct_per_trade: 0.03  # tamaño base por copia (fracción del equity)
+    max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
+    min_wallet_score: 0.55
+    min_copy_usdc_of_wallet: 500   # ignorar trades chicos de la wallet
+    strong_score: 0.70        # una sola wallet dispara si score>=0.70
+    strong_usdc: 2000         # ... y entró con >= 2000 USDC
+    confirm_count: 2          # o si >=2 wallets calificadas coinciden
+  news_trading:
+    enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
