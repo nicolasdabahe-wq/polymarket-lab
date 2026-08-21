@@ -3,6 +3,11 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    # environment pisa a env_file: aunque el .env traiga PMBOT_VAR_DIR= vacío
+    # (como el .env.example), dentro del contenedor los datos van a /data.
+    environment:
+      PMBOT_VAR_DIR: /data
+      PMBOT_LOG_JSON: "1"
     volumes:
       - pmbot-data:/data
     # Para inspeccionar: docker compose exec pmbot python -m pmbot briefing
