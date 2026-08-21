@@ -76,10 +76,11 @@ intel:
   max_age_hours: 36
   llm:
     enabled: true
-    model: claude-opus-5
-    effort: low            # análisis de noticias no necesita razonamiento máximo
+    # Haiku para clasificar noticias: la tarea es mapear noticia->mercado,
+    # no razonar. Con Opus el crédito de $5 se consumía en ~3 días.
+    model: claude-haiku-4-5
     # Máx. noticias a analizar con LLM por corrida (control de costos).
-    max_news_per_run: 20
+    max_news_per_run: 12
     # Máx. mercados candidatos que se le muestran al LLM por noticia.
     candidate_markets: 8
 
@@ -111,7 +112,10 @@ risk:
   max_pct_per_category: 0.50
   max_total_exposure_pct: 0.85
   daily_stop_loss_pct: 0.10
-  min_order_usdc: 1.0
+  min_order_usdc: 10.0      # piso por apuesta pedido por el dueño
+  # Freno TOTAL: a diferencia del stop diario (que se reinicia cada día UTC),
+  # este no se levanta solo. Protege el capital cuando nadie está mirando.
+  max_drawdown_pct: 0.25
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.
 
@@ -126,13 +130,15 @@ strategies:
     budget_pct: 0.30          # máx fracción del equity en esta estrategia
     min_edge: 0.01            # edge mínimo neto (1%) para entrar
     max_usdc_per_trade: 50    # risk/ igual re-verifica contra el 20% por mercado
+    min_usdc_per_trade: 12
     scan_top_markets: 300
   copy_trading:
     enabled: true
     budget_pct: 0.50
     # Con muchas wallets habilitadas conviene tamaño menor por copia: así
     # entran más apuestas simultáneas antes de topar la exposición máxima.
-    base_pct_per_trade: 0.045
+    base_pct_per_trade: 0.05
+    min_trade_usdc: 12.0      # piso por copia
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     min_wallet_score: 0.22
     min_copy_usdc_of_wallet: 150   # ignorar trades chicos de la wallet
@@ -166,6 +172,7 @@ strategies:
     enabled: true
     budget_pct: 0.20
     base_pct_per_trade: 0.05
+    min_trade_usdc: 12.0
     min_edge: 0.08            # el modelo debe discrepar >=8 puntos de prob.
     max_entry_price: 0.85
     min_days_to_resolution: 0.5

@@ -334,7 +334,9 @@ class LiveBroker(PaperBroker):
         ).fetchone()
         if row:
             return float(row["value"])
-        equity = self.portfolio_state().equity
+        # Equity crudo: portfolio_state() consulta este método, así que acá
+        # se calcula directo para no entrar en recursión.
+        equity = self.cash + self.positions_value()
         with self.conn:
             self.conn.execute(
                 """INSERT OR IGNORE INTO paper_state (key, value)

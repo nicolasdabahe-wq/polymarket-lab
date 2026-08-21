@@ -33,6 +33,7 @@ class Limits:
     max_total_exposure_pct: float
     daily_stop_loss_pct: float
     min_order_usdc: float = 1.0
+    max_drawdown_pct: float = 1.0   # freno total desde el capital inicial
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -43,6 +44,7 @@ class Limits:
             max_total_exposure_pct=float(cfg.get("max_total_exposure_pct", 0.80)),
             daily_stop_loss_pct=float(cfg.get("daily_stop_loss_pct", 0.05)),
             min_order_usdc=float(cfg.get("min_order_usdc", 1.0)),
+            max_drawdown_pct=float(cfg.get("max_drawdown_pct", 1.0)),
         )
 
 
@@ -77,6 +79,7 @@ class PortfolioState:
     exposure_by_category: dict[str, float]
     exposure_by_wallet: dict[str, float]
     exposure_by_strategy: dict[str, float]
+    starting_equity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,14 @@ def evaluate(order: OrderRequest, state: PortfolioState,
     if (state.day_start_equity > 0 and
             equity <= state.day_start_equity * (1 - limits.daily_stop_loss_pct)):
         return RiskDecision(False, "stop diario activado: no se abren posiciones hoy")
+
+    # Freno total: protege el capital cuando nadie está mirando. A diferencia
+    # del stop diario (que se reinicia cada día UTC), este no se levanta solo.
+    if (state.starting_equity > 0 and
+            equity <= state.starting_equity * (1 - limits.max_drawdown_pct)):
+        return RiskDecision(
+            False, f"FRENO TOTAL: caída de {limits.max_drawdown_pct:.0%} desde "
+                   f"el capital inicial (${state.starting_equity:.2f})")
 
     checks = [
         ("mercado", state.exposure_by_market.get(order.condition_id, 0.0),

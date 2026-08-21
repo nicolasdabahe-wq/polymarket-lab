@@ -205,6 +205,9 @@ class CopyTradingStrategy:
         self.budget_pct = float(cfg.get("budget_pct", 0.50))
         self.base_pct = float(cfg.get("base_pct_per_trade", 0.03))
         self.max_slippage = float(cfg.get("max_slippage_pct", 0.10))
+        # Piso por apuesta: por debajo de esto no vale la pena el riesgo
+        # operativo (fees de red, spread, mínimos del exchange).
+        self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
 
     @property
     def blacklist(self) -> set[str]:
@@ -295,7 +298,8 @@ class CopyTradingStrategy:
             return None
         equity = self.broker.equity()
         confidence = min(leader["score"], 1.0)
-        usdc_target = equity * self.base_pct * confidence
+        usdc_target = max(equity * self.base_pct * confidence,
+                          self.min_trade_usdc)
         size = usdc_target / max(cur_price, 0.01)
         names = ", ".join(w["wallet"][:8] for w in cand.wallets)
         reason = (f"copy: {len(cand.wallets)} wallet(s) top [{names}] "
@@ -371,7 +375,9 @@ class CopyTradingStrategy:
             leader = max(cand["wallets"], key=lambda w: scores.get(w, 0))
             equity = self.broker.equity()
             confidence = min(scores.get(leader, 0.5), 1.0)
-            size = equity * self.base_pct * confidence / max(cur_price, 0.01)
+            usdc_target = max(equity * self.base_pct * confidence,
+                              self.min_trade_usdc)
+            size = usdc_target / max(cur_price, 0.01)
             names = ", ".join(w[:8] for w in cand["wallets"])
             reason = (f"consenso de posiciones: {len(cand['wallets'])} wallets "
                       f"top [{names}] sostienen {cand['outcome']} "

@@ -62,6 +62,7 @@ class ArbitrageStrategy:
         self.min_edge = float(cfg.get("min_edge", 0.02))
         self.budget_pct = float(cfg.get("budget_pct", 0.30))
         self.max_usdc = float(cfg.get("max_usdc_per_trade", 50))
+        self.min_usdc = float(cfg.get("min_usdc_per_trade", 12))
         self.scan_top = int(cfg.get("scan_top_markets", 200))
 
     def candidates(self) -> list[sqlite3.Row]:
@@ -112,7 +113,8 @@ class ArbitrageStrategy:
         # por el máximo por trade y por el presupuesto (risk/ re-verifica).
         depth = min(yes_book.asks[0].size, no_book.asks[0].size)
         size = min(depth, self.max_usdc / (yes_ask + no_ask))
-        if size < 5:
+        # Piso: por debajo no compensa el riesgo operativo de dos patas.
+        if size * (yes_ask + no_ask) < self.min_usdc or size < 5:
             return None
         today = datetime.now(timezone.utc).date().isoformat()
         reason = (f"arbitraje: YES {yes_ask:.3f} + NO {no_ask:.3f} = "

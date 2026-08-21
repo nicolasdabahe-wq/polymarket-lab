@@ -113,6 +113,13 @@ class PaperBroker:
         yes = float(row["yes_price"])
         return yes if outcome_index == 0 else 1.0 - yes
 
+    def positions_value(self) -> float:
+        """Valor de mercado de las posiciones propias (sin tocar el estado
+        completo: lo usa starting_capital, que portfolio_state consulta)."""
+        return sum(p["size"] * self.mark_price(
+            p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
+            for p in self.positions())
+
     def portfolio_state(self) -> PortfolioState:
         cash = self.cash
         by_market: dict[str, float] = {}
@@ -136,6 +143,7 @@ class PaperBroker:
         return PortfolioState(
             equity=equity, cash=cash,
             day_start_equity=self.risk.day_start_equity(equity),
+            starting_equity=self.starting_capital(),
             exposure_total=positions_value,
             exposure_by_market=by_market, exposure_by_category=by_category,
             exposure_by_wallet=by_wallet, exposure_by_strategy=by_strategy,

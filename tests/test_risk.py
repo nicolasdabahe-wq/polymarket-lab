@@ -83,3 +83,38 @@ def test_daily_stop_blocks_buys():
 
 def test_zero_equity_blocks():
     assert not evaluate(order(), state(equity=0.0), LIMITS).approved
+
+
+# --- freno total (drawdown desde el capital inicial) ---
+
+LIMITS_DD = Limits(max_pct_per_market=0.20, max_pct_per_category=0.50,
+                   max_pct_per_copied_wallet=0.25, max_total_exposure_pct=0.85,
+                   daily_stop_loss_pct=0.10, min_order_usdc=10.0,
+                   max_drawdown_pct=0.25)
+
+
+def test_total_drawdown_blocks_buys():
+    # Capital inicial 278; equity 200 = -28% -> freno total
+    s = state(equity=200.0, cash=200.0, day_start_equity=205.0,
+              starting_equity=278.0, exposure_total=0.0)
+    d = evaluate(order(size=25, price=0.5), s, LIMITS_DD)
+    assert not d.approved and "FRENO TOTAL" in d.reason
+
+
+def test_within_drawdown_allows_buys():
+    s = state(equity=250.0, cash=250.0, day_start_equity=255.0,
+              starting_equity=278.0, exposure_total=0.0)
+    assert evaluate(order(size=25, price=0.5), s, LIMITS_DD).approved
+
+
+def test_drawdown_never_blocks_sells():
+    s = state(equity=100.0, cash=100.0, day_start_equity=250.0,
+              starting_equity=278.0, exposure_total=0.0)
+    assert evaluate(order(side="SELL"), s, LIMITS_DD).approved
+
+
+def test_min_order_floor_ten_dollars():
+    s = state(starting_equity=278.0)
+    d = evaluate(order(size=10, price=0.5), s, LIMITS_DD)   # $5
+    assert not d.approved and "chica" in d.reason
+    assert evaluate(order(size=24, price=0.5), s, LIMITS_DD).approved  # $12

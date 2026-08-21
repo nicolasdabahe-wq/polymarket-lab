@@ -157,6 +157,7 @@ class CryptoValueStrategy:
         self.min_days = float(cfg.get("min_days_to_resolution", 0.5))
         self.max_days = float(cfg.get("max_days_to_resolution", 45))
         self.vol_lookback = int(cfg.get("vol_lookback_days", 30))
+        self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
 
     async def scan_and_execute(self) -> list[str]:
         if not self.enabled:
@@ -223,7 +224,8 @@ class CryptoValueStrategy:
 
         equity = self.broker.equity()
         # tamaño escala con el edge real: 12 puntos = base, 24+ ~ doble
-        size_usdc = equity * self.base_pct * min(live_edge / self.min_edge, 2.0)
+        size_usdc = max(equity * self.base_pct * min(live_edge / self.min_edge, 2.0),
+                        self.min_trade_usdc)
         size = size_usdc / ask
         today = datetime.now(timezone.utc).date().isoformat()
         reason = (f"valor cripto: modelo da {win_prob:.0%} al {outcome} y el "
