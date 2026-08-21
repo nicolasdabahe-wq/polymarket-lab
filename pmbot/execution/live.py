@@ -230,6 +230,21 @@ class LiveBroker(PaperBroker):
         self._balance_cache = None
         return fill
 
+    def starting_capital(self) -> float:
+        """En real, la base del PnL es el equity observado la PRIMERA vez
+        (no el capital configurado del paper): se fija una única vez."""
+        row = self.conn.execute(
+            "SELECT value FROM paper_state WHERE key = 'live_starting_equity'"
+        ).fetchone()
+        if row:
+            return float(row["value"])
+        equity = self.portfolio_state().equity
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO paper_state (key, value)
+                   VALUES ('live_starting_equity', ?)""", (str(equity),))
+        return equity
+
     # ---------- diagnóstico ----------
 
     def check_connection(self) -> dict[str, Any]:

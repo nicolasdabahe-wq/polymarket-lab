@@ -128,9 +128,7 @@ class DailyRoutine:
         lines = [f"📊 pmbot — reporte diario {today} [{self.app.cfg.mode}]", ""]
 
         state = self.app.broker.portfolio_state()
-        starting = float(conn.execute(
-            "SELECT starting_usdc FROM paper_account WHERE id=1"
-        ).fetchone()["starting_usdc"])
+        starting = self.app.broker.starting_capital()
         total_pnl = state.equity - starting
         lines.append(
             f"💰 Equity: ${state.equity:.2f} (cash ${state.cash:.2f} + "

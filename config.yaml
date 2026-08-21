@@ -115,6 +115,7 @@ strategies:
     wallet_blacklist:
       - "0x6a72f61820b26b1fe4d956e17b6dc2a1ea3033ee"  # kch123: -19.7% en 38d, WR 48%
       - "0x17db3fcd93ba12d38382a0cade24b200185c5f6d"  # fengdubiying: sin evidencia positiva
+      - "0x6d20c35f65d9899b6d6b74f8466e824580f9a165"  # Djdjdjekekek: -20.1% en 50 copias, WR 40% (esports en vivo, incopiable)
     # Consenso de posiciones (rutina diaria): entrar cuando >=N wallets top
     # SOSTIENEN la misma posición grande en mercados lentos, aunque no
     # hayamos visto el trade en vivo. Complementa la copia en tiempo real.

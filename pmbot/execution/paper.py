@@ -86,6 +86,12 @@ class PaperBroker:
             "SELECT cash_usdc FROM paper_account WHERE id = 1").fetchone()
         return float(row["cash_usdc"])
 
+    def starting_capital(self) -> float:
+        """Base contra la que se mide el PnL total."""
+        row = self.conn.execute(
+            "SELECT starting_usdc FROM paper_account WHERE id = 1").fetchone()
+        return float(row["starting_usdc"])
+
     def _set_cash(self, value: float) -> None:
         self.conn.execute(
             "UPDATE paper_account SET cash_usdc = ?, updated_at = ? WHERE id = 1",

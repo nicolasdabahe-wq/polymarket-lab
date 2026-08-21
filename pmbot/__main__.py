@@ -131,9 +131,7 @@ async def cmd_trade_cycle(app: App) -> None:
 
 async def cmd_portfolio(app: App) -> None:
     state = app.broker.portfolio_state()
-    row = app.conn.execute(
-        "SELECT starting_usdc FROM paper_account WHERE id=1").fetchone()
-    starting = row["starting_usdc"]
+    starting = app.broker.starting_capital()
     pnl = state.equity - starting
     print(f"\n💰 Equity: ${state.equity:.2f}  (cash ${state.cash:.2f} + "
           f"posiciones ${state.exposure_total:.2f})")
