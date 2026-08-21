@@ -55,6 +55,10 @@ class DailyRoutine:
         await self.app.wallet_scorer.refresh_ranking()
         top = self.app.wallet_scorer.top_wallets()
         wallets = {r["wallet"] for r in top}
+        # Copiables validadas por backtest (incluidas las descubiertas fuera
+        # del leaderboard): hay que vigilarlas para ver sus trades nuevos.
+        wallets |= {r["wallet"] for r in self.app.conn.execute(
+            "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'")}
         # También refrescar las wallets que estamos copiando aunque hayan
         # salido del top: la señal de salida depende de su snapshot.
         for row in self.app.conn.execute(
@@ -261,8 +265,10 @@ class DailyRoutine:
             await self.app.news_analyzer.analyze_pending(pending)
 
     async def poll_smart_money(self) -> None:
-        top = self.app.wallet_scorer.top_wallets()
-        wallets = [r["wallet"] for r in top]
+        wallets = sorted({r["wallet"] for r in self.app.wallet_scorer.top_wallets()}
+                         | {r["wallet"] for r in self.app.conn.execute(
+                             "SELECT wallet FROM wallet_backtest "
+                             "WHERE verdict = 'copiable'")})
         if not wallets:
             return
         trades = await self.app.wallet_tracker.poll_new_activity(wallets)
@@ -288,9 +294,11 @@ class DailyRoutine:
             log.exception("reconciliación falló; sigo")
 
     async def poll_holdings_consensus(self) -> None:
-        """Refresca las carteras de las wallets top y busca consensos."""
-        top = self.app.wallet_scorer.top_wallets()
-        wallets = [r["wallet"] for r in top]
+        """Refresca las carteras de las wallets vigiladas y busca consensos."""
+        wallets = sorted({r["wallet"] for r in self.app.wallet_scorer.top_wallets()}
+                         | {r["wallet"] for r in self.app.conn.execute(
+                             "SELECT wallet FROM wallet_backtest "
+                             "WHERE verdict = 'copiable'")})
         if not wallets:
             return
         await self.app.wallet_tracker.refresh_positions(wallets)

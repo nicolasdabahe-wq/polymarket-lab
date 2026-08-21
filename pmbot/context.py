@@ -78,7 +78,7 @@ def build_app(cfg: Config) -> App:
         wallet_tracker=WalletTracker(data_api, conn, cfg.section("smart_money")),
         wallet_validator=WalletValidator(
             conn, CopyBacktester(data_api, GammaClient(http)),
-            cfg.section("smart_money")),
+            cfg.section("smart_money"), api=data_api),
         news_fetcher=NewsFetcher(http, conn, cfg.section("intel")),
         news_analyzer=NewsAnalyzer(conn, cfg.section("intel"),
                                    cfg.anthropic_api_key),

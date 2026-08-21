@@ -48,6 +48,14 @@ smart_money:
     min_copies: 5           # muestra mínima para dar veredicto
     max_wallets_per_run: 40
     revalidate_hours: 24
+    # Descubrimiento: wallets con posiciones grandes en los mercados más
+    # activos. El leaderboard es histórico (muchas estrellas ya no operan);
+    # los holders de mercados calientes son quienes juegan AHORA.
+    discovery:
+      enabled: true
+      markets: 15             # mercados top de los que mirar holders
+      holders_per_market: 10
+      max_candidates: 25      # candidatas nuevas por corrida
 
 intel:
   # Feeds RSS a vigilar. category debe coincidir con las categorías de mercados.

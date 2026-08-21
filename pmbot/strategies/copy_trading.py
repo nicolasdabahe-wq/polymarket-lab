@@ -224,6 +224,14 @@ class CopyTradingStrategy:
                 continue
             if w in validated or score >= trust_score:
                 out[w] = score
+        # Wallets descubiertas fuera del leaderboard: el backtest es su aval,
+        # así que entran con un score sintético según su ROI simulado.
+        for r in self.conn.execute(
+                "SELECT wallet, roi FROM wallet_backtest WHERE verdict = 'copiable'"):
+            w = r["wallet"]
+            if w in self.blacklist or w in out:
+                continue
+            out[w] = min(0.50 + max(r["roi"] or 0.0, 0.0), 0.95)
         return out
 
     def _min_usdc_by_wallet(self) -> dict[str, float]:

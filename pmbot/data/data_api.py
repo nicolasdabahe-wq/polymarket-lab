@@ -117,6 +117,23 @@ class DataApiClient:
                 continue
         return out
 
+    async def holders(self, condition_id: str, limit: int = 20) -> list[str]:
+        """Wallets con mayor posición en un mercado. Fuente de candidatas
+        ACTIVAS que el leaderboard (acumulado histórico) no muestra."""
+        try:
+            data = await self.http.get_json(
+                f"{DATA_BASE}/holders",
+                params={"market": condition_id, "limit": limit})
+        except Exception:
+            return []
+        wallets: list[str] = []
+        for token in data or []:
+            for h in token.get("holders") or []:
+                w = (h.get("proxyWallet") or "").lower()
+                if w and w not in wallets:
+                    wallets.append(w)
+        return wallets
+
     async def activity(self, wallet: str, limit: int = 500,
                        offset: int = 0) -> list[Activity]:
         rows = await self.http.get_json(

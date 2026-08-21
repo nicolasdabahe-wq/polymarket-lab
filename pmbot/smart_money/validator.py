@@ -24,9 +24,10 @@ log = logging.getLogger("pmbot.smart_money.validator")
 
 class WalletValidator:
     def __init__(self, conn: sqlite3.Connection, backtester: CopyBacktester,
-                 cfg: dict[str, Any]) -> None:
+                 cfg: dict[str, Any], api: Any = None) -> None:
         self.conn = conn
         self.backtester = backtester
+        self.api = api
         vcfg = cfg.get("validation") or {}
         self.enabled = bool(vcfg.get("enabled", True))
         self.days = int(vcfg.get("days", 30))
@@ -37,6 +38,11 @@ class WalletValidator:
         self.min_copies = int(vcfg.get("min_copies", 5))
         self.max_wallets = int(vcfg.get("max_wallets_per_run", 20))
         self.revalidate_hours = float(vcfg.get("revalidate_hours", 24))
+        dcfg = vcfg.get("discovery") or {}
+        self.discover_enabled = bool(dcfg.get("enabled", True))
+        self.discover_markets = int(dcfg.get("markets", 15))
+        self.discover_per_market = int(dcfg.get("holders_per_market", 10))
+        self.discover_max = int(dcfg.get("max_candidates", 25))
 
     def _needs_test(self, wallet: str) -> bool:
         row = self.conn.execute(
@@ -51,6 +57,38 @@ class WalletValidator:
         age_h = (datetime.now(timezone.utc) - tested).total_seconds() / 3600
         return age_h >= self.revalidate_hours
 
+    async def discover_candidates(self) -> list[str]:
+        """Wallets con posiciones grandes en los mercados más activos.
+
+        El leaderboard es un acumulado histórico: muchas de sus estrellas ya
+        no operan. Los holders de los mercados calientes son, por definición,
+        gente jugando AHORA — que es a quien se puede copiar.
+        """
+        if not (self.discover_enabled and self.api):
+            return []
+        markets = self.conn.execute(
+            """SELECT condition_id FROM markets WHERE active = 1
+               ORDER BY volume_24h DESC LIMIT ?""",
+            (self.discover_markets,)).fetchall()
+        known = {r["wallet"] for r in self.conn.execute(
+            "SELECT wallet FROM wallet_backtest")}
+        known |= {r["wallet"] for r in self.conn.execute(
+            "SELECT wallet FROM wallet_ranking")}
+        found: list[str] = []
+        for row in markets:
+            if len(found) >= self.discover_max:
+                break
+            for wallet in await self.api.holders(row["condition_id"],
+                                                 self.discover_per_market):
+                if wallet not in known and wallet not in found:
+                    found.append(wallet)
+                    if len(found) >= self.discover_max:
+                        break
+            await asyncio.sleep(0.4)
+        if found:
+            log.info("descubiertas %d wallets activas desde holders", len(found))
+        return found
+
     async def validate_ranked(self) -> list[dict[str, Any]]:
         """Testea las wallets del ranking que lo necesiten. Devuelve resumen."""
         if not self.enabled:
@@ -61,6 +99,12 @@ class WalletValidator:
             (self.max_wallets,)).fetchall()
         pending = [(r["wallet"], r["username"]) for r in rows
                    if self._needs_test(r["wallet"])]
+        # Sumar candidatas activas descubiertas en los mercados calientes.
+        try:
+            for wallet in await self.discover_candidates():
+                pending.append((wallet, ""))
+        except Exception as exc:
+            log.warning("descubrimiento de wallets falló: %s", exc)
         if not pending:
             return []
         log.info("validando %d wallets por backtest", len(pending))
