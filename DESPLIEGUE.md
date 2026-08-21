@@ -1,5 +1,12 @@
 # Guía de despliegue — paso a paso
 
+> ⚠️ **REGIÓN DEL VPS (crítico)**: Polymarket geobloquea las órdenes según
+> la IP del servidor. NO usar datacenters de EE.UU., Reino Unido, Alemania,
+> Francia, Canadá (BC/ON/AB/QC), Australia ni Singapur. **Ámsterdam (AMS3)
+> funciona**: Países Bajos permite trading por API según la documentación
+> oficial (docs.polymarket.com/developers/CLOB/geoblock). La lectura de
+> datos funciona desde cualquier lado; el bloqueo es solo al ENVIAR órdenes.
+
 Esta guía te deja el bot corriendo 24/7 en tu VPS. Las secciones 1–6 valen
 para paper y real; la sección 7 es el paso a dinero real (5.000 MXN ≈ 270
 USDC).
