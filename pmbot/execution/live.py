@@ -213,7 +213,25 @@ class LiveBroker(PaperBroker):
             OrderArgsV2(token_id=request.token_id, price=price, size=size,
                         side=BUY if request.side == "BUY" else SELL),
             PartialCreateOrderOptions(tick_size=tick_str, neg_risk=neg_risk))
-        resp = client.post_order(order, OrderType.FAK)
+
+        if request.side == "SELL":
+            self._refresh_conditional(client, request.token_id)
+        # Tras una compra reciente, el CLOB tarda unos segundos en registrar
+        # las shares (settlement + cache): las ventas reintentan con refresh.
+        attempts = 4 if request.side == "SELL" else 1
+        resp = None
+        for i in range(attempts):
+            try:
+                resp = client.post_order(order, OrderType.FAK)
+                break
+            except Exception as exc:
+                if ("not enough balance" in str(exc) and i < attempts - 1):
+                    log.info("venta: balance aún no asentado, reintento en 5s "
+                             "(%d/%d)", i + 1, attempts)
+                    time.sleep(5)
+                    self._refresh_conditional(client, request.token_id)
+                    continue
+                raise
         shares, avg_price, error = parse_post_response(
             resp, request.side, size, price)
 
@@ -232,6 +250,17 @@ class LiveBroker(PaperBroker):
             return Fill("", "NO_LIQUIDITY", detail=error)
         usdc = shares * avg_price
         return Fill("", "FILLED", shares, avg_price, usdc, fee=0.0)
+
+    @staticmethod
+    def _refresh_conditional(client: Any, token_id: str) -> None:
+        """Pide al CLOB que refresque el balance del token condicional."""
+        try:
+            from py_clob_client_v2.clob_types import (AssetType,
+                                                      BalanceAllowanceParams)
+            client.update_balance_allowance(BalanceAllowanceParams(
+                asset_type=AssetType.CONDITIONAL, token_id=token_id))
+        except Exception as exc:
+            log.debug("refresh condicional falló: %s", exc)
 
     @staticmethod
     def _resolve_delayed(client: Any, order_id: str,

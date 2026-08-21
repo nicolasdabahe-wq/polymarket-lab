@@ -212,6 +212,32 @@ async def cmd_test_trade(app: App) -> None:
     from .risk import OrderRequest
 
     print(f"Modo: {app.cfg.mode} — orden de prueba mínima (5 shares)")
+
+    # Si quedó una posición abierta de una prueba anterior, cerrarla primero.
+    stamp0 = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    for pos in app.conn.execute(
+            "SELECT * FROM paper_positions WHERE strategy = 'live_test'").fetchall():
+        print(f"Cerrando prueba anterior: {pos['size']:.1f} u de "
+              f"'{(pos['question'] or '')[:50]}'")
+        sell_prev = await app.broker.execute(
+            f"livetest:{stamp0}:cleanup",
+            OrderRequest(strategy="live_test", condition_id=pos["condition_id"],
+                         category=pos["category"] or "other",
+                         token_id=pos["token_id"], outcome=pos["outcome"],
+                         outcome_index=pos["outcome_index"] or 0, side="SELL",
+                         size=pos["size"], price=0.0,
+                         reason="prueba de circuito: cierre pendiente"))
+        print(f"VENTA  → {sell_prev.status} {sell_prev.size:.1f} u @ "
+              f"{sell_prev.price:.3f} (${sell_prev.usdc:.2f}) {sell_prev.detail}")
+        if sell_prev.status == "FILLED":
+            print(f"\n✅ CIRCUITO COMPLETO VERIFICADO (compra previa + esta "
+                  f"venta). PnL de la prueba: {sell_prev.realized_pnl:+.2f} USDC")
+            await app.notifier.send(
+                "🧪 Prueba de circuito OK: compra y venta reales verificadas "
+                f"(PnL {sell_prev.realized_pnl:+.2f} USDC)")
+            return
+        print("La venta de limpieza no llenó; sigo con una prueba nueva.\n")
+
     # Sin deportes: los mercados en vivo tienen delay de matcheo y la
     # prueba debe ser instantánea.
     row = app.conn.execute(
