@@ -388,8 +388,12 @@ def cmd_wallets(app: App) -> None:
           f"veredicto).")
 
 
-async def cmd_validate_wallets(app: App, force: bool = False) -> None:
-    results = await app.wallet_validator.validate_ranked(force=force)
+async def cmd_validate_wallets(app: App, force: bool = False,
+                               wallets: list[str] | None = None) -> None:
+    if wallets:
+        results = await app.wallet_validator.validar_lista(wallets)
+    else:
+        results = await app.wallet_validator.validate_ranked(force=force)
     if not results:
         print("Nada que validar (ya testeadas recientemente o ranking vacío).")
     for r in sorted(results, key=lambda x: -(x["roi"] or 0)):
@@ -612,6 +616,9 @@ def main() -> None:
     p_val = sub.add_parser("validate-wallets")
     p_val.add_argument("--force", action="store_true",
                        help="reevaluar a todas, sin esperar la ventana de 24h")
+    p_val.add_argument("--wallet", action="append", default=None,
+                       help="backtestear solo esta wallet (0x… o alias "
+                            "público); repetible")
     sub.add_parser("diagnose")
     sub.add_parser("wallets")
     sub.add_parser("mlb")
@@ -672,7 +679,8 @@ def main() -> None:
                 from .diagnose import diagnose
                 await diagnose()
             elif args.command == "validate-wallets":
-                await cmd_validate_wallets(app, force=args.force)
+                await cmd_validate_wallets(app, force=args.force,
+                                           wallets=args.wallet)
             elif args.command == "wallets":
                 cmd_wallets(app)
             elif args.command == "mlb":

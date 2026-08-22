@@ -140,3 +140,77 @@ def test_revalidacion_no_repite_wallets(tmp_path):
                                         "discovery": {"enabled": False}}})
     asyncio.run(v.validate_ranked(force=True))
     assert pedidas == ["0xrepetida"]
+
+
+def test_semillas_de_config_entran_al_universo(tmp_path):
+    """Una wallet anotada a mano en seed_wallets (vista en la app o en un
+    sitio de analytics) tiene que llegar a la cola del backtest aunque no
+    esté en el ranking ni en la cinta."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.validator import WalletValidator
+
+    semilla = "0x" + "ab" * 20
+    conn = connect(tmp_path / "v3.db")
+    pedidas: list[str] = []
+
+    class FakeBacktester:
+        async def run_multi(self, wallet, days, stake_usdc, thresholds):
+            pedidas.append(wallet)
+            raise RuntimeError("corta acá: solo interesa a quién se llamó")
+
+    v = WalletValidator(conn, FakeBacktester(),
+                        {"validation": {"enabled": True,
+                                        "seed_wallets": [semilla],
+                                        "discovery": {"enabled": False}}})
+    asyncio.run(v.validate_ranked(force=True))
+    assert pedidas == [semilla]
+
+
+def test_validar_lista_resuelve_alias(tmp_path):
+    """validar_lista acepta un alias público y lo resuelve a wallet vía
+    Gamma antes de backtestearlo."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.validator import WalletValidator
+
+    resuelta = "0x" + "cd" * 20
+    conn = connect(tmp_path / "v4.db")
+    pedidas: list[str] = []
+
+    class FakeGamma:
+        async def resolver_usuario(self, nombre):
+            assert nombre == "C03B"
+            return resuelta, "C03B"
+
+    class FakeBacktester:
+        gamma = FakeGamma()
+
+        async def run_multi(self, wallet, days, stake_usdc, thresholds):
+            pedidas.append(wallet)
+            raise RuntimeError("corta acá")
+
+    v = WalletValidator(conn, FakeBacktester(),
+                        {"validation": {"enabled": True,
+                                        "discovery": {"enabled": False}}})
+    asyncio.run(v.validar_lista(["C03B", "0x" + "ef" * 20]))
+    assert pedidas == [resuelta, "0x" + "ef" * 20]
+
+
+def test_resolver_usuario_prefiere_coincidencia_exacta():
+    import asyncio
+
+    from pmbot.data.gamma import GammaClient
+
+    class FakeHttp:
+        async def get_json(self, url, params=None):
+            assert "public-search" in url
+            return {"profiles": [
+                {"name": "mr.Ozio", "proxyWallet": "0xOTRA"},
+                {"name": "mr.ozi", "proxyWallet": "0xBUENA"},
+            ]}
+
+    g = GammaClient(FakeHttp())
+    assert asyncio.run(g.resolver_usuario("mr.ozi")) == ("0xbuena", "mr.ozi")

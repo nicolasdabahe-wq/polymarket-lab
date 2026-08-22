@@ -153,6 +153,31 @@ class GammaClient:
         log.debug("Gamma: %d mercados con tag '%s'", len(salida), tag_slug)
         return salida
 
+    async def resolver_usuario(self, nombre: str) -> tuple[str, str] | None:
+        """Busca un perfil por nombre de usuario y devuelve (wallet, nombre).
+
+        Permite sembrar wallets por su alias público (como aparecen en
+        Polymarket o en sitios de analytics) sin conocer la dirección."""
+        try:
+            data = await self.http.get_json(
+                f"{GAMMA_BASE}/public-search",
+                params={"q": nombre, "search_profiles": 1,
+                        "limit_per_type": 5})
+        except Exception:
+            return None
+        perfiles = (data or {}).get("profiles") or []
+        # Preferir la coincidencia exacta (sin mayúsculas); si no, la primera.
+        for p in perfiles:
+            if (p.get("name") or "").lower() == nombre.lower():
+                wallet = (p.get("proxyWallet") or "").lower()
+                if wallet:
+                    return wallet, p.get("name") or nombre
+        for p in perfiles:
+            wallet = (p.get("proxyWallet") or "").lower()
+            if wallet:
+                return wallet, p.get("name") or nombre
+        return None
+
     async def fetch_market(self, condition_id: str) -> Market | None:
         """Trae un mercado puntual (para oportunidades fuera del top de
         volumen: las ballenas tienen posiciones grandes en mercados de

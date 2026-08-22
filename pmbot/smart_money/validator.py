@@ -46,6 +46,29 @@ class WalletValidator:
         self.discover_markets = int(dcfg.get("markets", 15))
         self.discover_per_market = int(dcfg.get("holders_per_market", 10))
         self.discover_max = int(dcfg.get("max_candidates", 25))
+        # Semillas manuales: direcciones 0x… o alias públicos anotados en
+        # config (vistos en Polymarket, sitios de analytics, etc.). Sembrar
+        # no habilita a nadie: solo garantiza que el backtest los mire.
+        self.seed_wallets = [str(x).strip() for x in
+                             (vcfg.get("seed_wallets") or []) if str(x).strip()]
+
+    async def _resolver(self, entrada: str) -> tuple[str, str] | None:
+        """Convierte una entrada (dirección o alias público) en
+        (wallet, username)."""
+        if entrada.lower().startswith("0x") and len(entrada) == 42:
+            return entrada.lower(), ""
+        res = await self.backtester.gamma.resolver_usuario(entrada)
+        if res is None:
+            log.warning("no pude resolver '%s' a una wallet", entrada)
+        return res
+
+    async def _semillas(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for entrada in self.seed_wallets:
+            res = await self._resolver(entrada)
+            if res:
+                out.append(res)
+        return out
 
     async def _universo(self) -> list[Candidata]:
         """Todas las wallets que conocemos, de todas las fuentes.
@@ -87,6 +110,13 @@ class WalletValidator:
                 agregar(wallet, "holders")
         except Exception as exc:
             log.warning("descubrimiento por holders falló: %s", exc)
+        # 5. Semillas manuales de config: descubrimiento humano (traders
+        #    vistos en la app o en sitios de analytics).
+        try:
+            for wallet, username in await self._semillas():
+                agregar(wallet, "semilla", username=username)
+        except Exception as exc:
+            log.warning("resolución de semillas falló: %s", exc)
         return fuera
 
     def _needs_test(self, wallet: str) -> bool:
@@ -155,7 +185,21 @@ class WalletValidator:
         sin_veredicto = sum(1 for c in cola if c.testeada_en is None)
         log.info("validando %d de %d candidatas (%d sin veredicto previo)",
                  len(pending), len(candidatas), sin_veredicto)
+        return await self._correr(pending)
 
+    async def validar_lista(self, entradas: list[str]) -> list[dict[str, Any]]:
+        """Backtestea wallets puntuales (dirección 0x… o alias público),
+        sin esperar la ventana de revalidación. Para probar al momento a un
+        trader visto en la app o en un sitio de analytics."""
+        pending: list[tuple[str, str]] = []
+        for entrada in entradas:
+            res = await self._resolver(entrada.strip())
+            if res:
+                pending.append(res)
+        return await self._correr(pending)
+
+    async def _correr(self, pending: list[tuple[str, str]]
+                      ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for wallet, username in pending:
             try:

@@ -70,6 +70,18 @@ smart_money:
       # visible. El leaderboard muestra a los famosos; esto muestra a quien
       # está moviendo dinero ahora.
       candidate_min_usdc: 500
+    # Semillas manuales: traders vistos a mano (en la app de Polymarket,
+    # en sitios de analytics, en redes). Acepta dirección 0x… o alias
+    # público (se resuelve solo). Sembrar NO habilita a nadie: solo
+    # garantiza que el backtest los mire — el veredicto lo dan los números.
+    # Probados el 2026-08-22 desde Polymarket Analytics:
+    #   C03B copiable (+9.9% / 61 copias), Shimi1234 copiable (+10.2% / 292),
+    #   mr.ozi y mpoly rechazadas por inconsistentes.
+    seed_wallets:
+      - "0x40604cb1f958c03bea0b18aa43e4cb0d62f33ec3"   # C03B
+      - "0x41d28673f6fbcf28d08e6b2bd87072b34073d7c9"   # Shimi1234
+      - "0x614dc8d3542c12103d2c6a3553fd761e391d1546"   # mr.ozi
+      - "0xaa57cd0782fb4583206ce547379e6442db61a128"   # mpoly
 
 intel:
   # Feeds RSS a vigilar. category debe coincidir con las categorías de mercados.
