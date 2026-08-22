@@ -177,6 +177,7 @@ class DailyRoutine:
         moves["arbitrajes"] = await self.app.arbitrage.scan_and_execute()
         moves["valor_cripto"] = await self.app.crypto_value.scan_and_execute()
         moves["valor_deportes"] = await self.app.sports_value.scan_and_execute()
+        moves["escaleras"] = await self.app.ladder_arb.scan_and_execute()
         self.app.broker.snapshot_equity()
         return moves
 
@@ -433,6 +434,11 @@ class DailyRoutine:
             await self.app.notifier.send(
                 "📐 Valor cripto (modelo vs mercado):\n"
                 + "\n".join(f"• {d}" for d in value_trades))
+        escaleras = await self.app.ladder_arb.scan_and_execute()
+        if escaleras:
+            await self.app.notifier.send(
+                "🪜 Contradicción lógica capturada (ganancia asegurada):\n"
+                + "\n".join(f"• {d}" for d in escaleras))
 
 
 async def run_forever(app: App) -> None:

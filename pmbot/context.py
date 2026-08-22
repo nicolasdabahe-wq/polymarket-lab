@@ -18,7 +18,8 @@ from .data.sports import MlbClient
 from .smart_money.tape import TradeTape
 from .smart_money import WalletScorer, WalletTracker, WalletValidator
 from .strategies import (ArbitrageStrategy, CopyTradingStrategy,
-                         CryptoValueStrategy, SportsValueStrategy)
+                         CryptoValueStrategy, LadderArbStrategy,
+                         SportsValueStrategy)
 
 
 @dataclass
@@ -44,6 +45,7 @@ class App:
     copy_trading: CopyTradingStrategy
     crypto_value: CryptoValueStrategy
     sports_value: Any
+    ladder_arb: Any
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -108,4 +110,7 @@ def build_app(cfg: Config) -> App:
         sports_value=SportsValueStrategy(
             conn, MlbClient(http), GammaClient(http), broker,
             strategies_cfg.get("sports_value") or {}, MarketStore(conn)),
+        ladder_arb=LadderArbStrategy(
+            conn, clob, GammaClient(http), broker,
+            strategies_cfg.get("ladder_arb") or {}, MarketStore(conn)),
     )

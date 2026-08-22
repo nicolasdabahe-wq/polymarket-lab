@@ -95,3 +95,30 @@ def test_degenerate_inputs():
     assert prob_terminal_above(SPOT, 50000, 0.0, 10) == 1.0
     assert prob_terminal_above(SPOT, 90000, 0.0, 10) == 0.0
     assert prob_touch(SPOT, 90000, VOL, 0) == 0.0
+
+
+# --- sufijos y carreras (errores reales del escáner del 2026-08-22) ---
+
+def test_150k_son_ciento_cincuenta_mil():
+    # "Will Bitcoin hit $150k..." se leía como strike $150: con el spot en
+    # seis cifras el modelo regalaba probabilidad 1.0 a un mercado de 3¢.
+    p = parse_crypto_question("Will Bitcoin hit $150k by December 31, 2026?")
+    assert p and p.strike == 150_000 and p.kind == "touch_above"
+
+
+def test_6k_son_seis_mil():
+    p = parse_crypto_question("Will Ethereum hit $6k by December 31, 2026?")
+    assert p and p.strike == 6_000
+
+
+def test_sin_sufijo_sigue_igual():
+    p = parse_crypto_question("Will Bitcoin reach $160,000 by December 31, 2026?")
+    assert p and p.strike == 160_000
+
+
+def test_las_carreras_entre_barreras_no_se_leen():
+    # "o $3.000 primero" es otro payoff (carrera), no un one-touch.
+    assert parse_crypto_question(
+        "Will Ethereum hit $1,000 or $3,000 first?") is None
+    assert parse_crypto_question(
+        "Will Solana hit $60 or $140 first?") is None

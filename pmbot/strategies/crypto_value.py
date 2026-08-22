@@ -44,7 +44,7 @@ ASSET_PRODUCTS = {
 QUESTION_RE = re.compile(
     r"will\s+(?:the\s+price\s+of\s+)?(?P<asset>bitcoin|btc|ethereum|ether|eth|"
     r"solana|sol|xrp|dogecoin|doge)\b(?P<middle>.{0,60}?)"
-    r"\$(?P<strike>[\d,]+(?:\.\d+)?)",
+    r"\$(?P<strike>[\d,]+(?:\.\d+)?)(?P<sufijo>[km]?)\b",
     re.IGNORECASE)
 
 
@@ -95,6 +95,10 @@ def parse_crypto_question(question: str) -> ParsedMarket | None:
 
     Devuelve None si la pregunta es ambigua (mejor no operar que adivinar).
     """
+    # "¿toca $1.000 o $3.000 primero?" es una carrera entre dos barreras,
+    # otro payoff: mejor no opinar que confundirlo con un one-touch.
+    if re.search(r"\bor\b.{0,15}\bfirst\b", question, re.IGNORECASE):
+        return None
     match = QUESTION_RE.search(question)
     if not match:
         return None
@@ -105,6 +109,10 @@ def parse_crypto_question(question: str) -> ParsedMarket | None:
         strike = float(match.group("strike").replace(",", ""))
     except ValueError:
         return None
+    # "$150k" son 150.000, no 150: sin esto el modelo creía que Bitcoin
+    # ya estaba arriba del strike y regalaba probabilidad 1.0.
+    sufijo = (match.group("sufijo") or "").lower()
+    strike *= {"k": 1_000, "m": 1_000_000}.get(sufijo, 1)
     middle = match.group("middle").lower()
     q = question.lower()
     touch_words = ("reach", "hit", "touch")

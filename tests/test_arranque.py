@@ -30,6 +30,7 @@ def test_la_app_se_construye_con_el_config_real(app):
     # Todas las piezas que el scheduler usa en el primer ciclo.
     for pieza in ("broker", "risk", "gamma", "data_api", "tape",
                   "copy_trading", "arbitrage", "crypto_value", "sports_value",
+                  "ladder_arb",
                   "wallet_scorer", "wallet_tracker", "wallet_validator",
                   "notifier", "market_store"):
         assert getattr(app, pieza, None) is not None, f"falta {pieza}"

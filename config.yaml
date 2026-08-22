@@ -223,6 +223,17 @@ strategies:
       max_entry_price: 0.80
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
+  # Arbitraje de escalera: contradicciones lógicas entre mercados hermanos.
+  # Si "¿BTC llega a $150k?" cuesta MENOS que "¿BTC llega a $160k?" (mismo
+  # vencimiento), comprar el YES del grande y el NO del chico paga $1 o $2
+  # y nunca menos de lo invertido. Encontrado en vivo el 2026-08-22 en BTC
+  # y XRP. No opina sobre nada: es aritmética.
+  ladder_arb:
+    enabled: true
+    budget_pct: 0.30
+    min_edge: 0.015          # 1,5% asegurado como mínimo para mover dos patas
+    max_usdc_per_pair: 60
+    min_usdc_per_pair: 12
   # Valor en deportes: NUESTRO propio modelo contra el precio del mercado.
   # No intenta adivinar mejor que las casas de apuestas (imposible), sino
   # detectar cuándo Polymarket se aleja mucho de un número razonable: juegos
