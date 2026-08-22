@@ -57,3 +57,53 @@ def test_evento_sin_h2h_se_ignora():
     ev = {"home_team": "A", "away_team": "B", "bookmakers": [
         {"key": "x", "markets": [{"key": "spreads", "outcomes": []}]}]}
     assert consenso([ev]) == []
+
+
+# --- fútbol: tres resultados y nombres ---
+
+def evento3(local, visitante, pl, pv, pe):
+    return {"home_team": local, "away_team": visitante,
+            "commence_time": "2026-08-22T23:00:00Z",
+            "bookmakers": [{"key": "pinnacle", "markets": [
+                {"key": "h2h", "outcomes": [
+                    {"name": local, "price": pl},
+                    {"name": visitante, "price": pv},
+                    {"name": "Draw", "price": pe}]}]}]}
+
+
+def test_futbol_devig_a_tres_resultados():
+    # 2.10 / 3.80 / 3.30: local ~47.5%, visitante ~26.2%, empate ~30.2%
+    # sin de-vig; normalizado suman 1.
+    [l] = consenso([evento3("Brentford", "Tottenham", 2.10, 3.80, 3.30)])
+    assert l.prob_empate is not None
+    total = l.prob_local + l.prob_visitante + l.prob_empate
+    assert total == pytest.approx(1.0)
+    assert l.prob_local == pytest.approx(0.458, abs=0.005)
+
+
+def test_en_futbol_ganar_no_es_lo_contrario_de_perder():
+    # P(local) + P(visitante) < 1 porque el empate existe: comprar NO del
+    # "¿gana X?" incluye el empate y eso cambia todos los números.
+    [l] = consenso([evento3("Brentford", "Tottenham", 2.10, 3.80, 3.30)])
+    assert l.prob_local + l.prob_visitante < 0.75
+
+
+def test_nombres_con_adornos():
+    from pmbot.data.odds import nombre_coincide
+    assert nombre_coincide("Brentford", "Will Brentford FC win on 2026-08-22?")
+    assert nombre_coincide("Deportivo Toluca",
+                           "Will Deportivo Toluca FC win on 2026-08-22?")
+    assert nombre_coincide("CF América", "Will CF América win on 2026-08-21?")
+
+
+def test_manchesters_no_se_confunden():
+    from pmbot.data.odds import nombre_coincide
+    q_united = "Will Manchester United FC win on 2026-08-22?"
+    assert nombre_coincide("Manchester United", q_united)
+    assert not nombre_coincide("Manchester City", q_united)
+
+
+def test_equipos_distintos_no_matchean():
+    from pmbot.data.odds import nombre_coincide
+    assert not nombre_coincide("Brentford",
+                               "Will Tottenham Hotspur win on 2026-08-22?")

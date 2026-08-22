@@ -221,6 +221,11 @@ class CopyTradingStrategy:
         self.consensus_boost = float(cfg.get("consensus_boost", 0.4))
         self.prematch_only_sports = bool(
             cfg.get("sports_only_prematch", True))
+        # Escudo sharp: no copiar pagando más que el precio justo de las
+        # casas profesionales + esta tolerancia. La primera noche real se
+        # compró NO de Brentford a 0.58 cuando la línea decía 0.535.
+        self.sharp_tolerance = float(cfg.get("sharp_tolerance", 0.04))
+        self.sharp_max_age_h = float(cfg.get("sharp_max_age_hours", 8))
 
     @property
     def blacklist(self) -> set[str]:
@@ -279,6 +284,25 @@ class CopyTradingStrategy:
         return kelly_usdc(self.broker.equity(), price_pagado, exp_r,
                           self.kelly_fraction, self.min_trade_usdc,
                           self.max_trade_pct)
+
+    def _precio_justo_sharp(self, condition_id: str,
+                            outcome_index: int) -> float | None:
+        """Probabilidad sharp del outcome, si hay línea fresca. None si no."""
+        row = self.conn.execute(
+            "SELECT prob_first, updated_at FROM sharp_lines "
+            "WHERE condition_id = ?", (condition_id,)).fetchone()
+        if not row:
+            return None
+        from datetime import datetime, timedelta, timezone
+        try:
+            edad = datetime.now(timezone.utc) - datetime.fromisoformat(
+                row["updated_at"])
+        except ValueError:
+            return None
+        if edad > timedelta(hours=self.sharp_max_age_h):
+            return None
+        p = float(row["prob_first"])
+        return p if outcome_index == 0 else 1.0 - p
 
     def _min_usdc_by_wallet(self) -> dict[str, float]:
         """Umbral de tamaño óptimo por wallet según su backtest."""
@@ -339,6 +363,12 @@ class CopyTradingStrategy:
                 and (market["category"] or "") in SPORT_CATEGORIES
                 and not market_not_started(market)):
             log.info("no copio '%s': deporte ya empezado", cand.title[:40])
+            return None
+        justo = self._precio_justo_sharp(cand.condition_id,
+                                         cand.outcome_index)
+        if justo is not None and cur_price > justo + self.sharp_tolerance:
+            log.info("no copio '%s': pagaríamos %.3f y la línea sharp dice "
+                     "%.3f", cand.title[:40], cur_price, justo)
             return None
         if not slippage_ok(leader["price"], cur_price, self.max_slippage):
             log.info("no copio '%s': precio ya movió %.3f→%.3f (>%.0f%%)",

@@ -26,7 +26,12 @@ from ..http import HttpClient
 log = logging.getLogger("pmbot.data.odds")
 
 ODDS_BASE = "https://api.the-odds-api.com/v4"
-CACHE_SEGUNDOS = 2 * 3600
+# 6h de cache: el tier gratis da 500 créditos/mes y cada liga consultada
+# cuesta 1 por llamada. Con 6h son máx 4 llamadas/día por liga; con MLB y
+# tres ligas de fútbol quedan ~480/mes, justo dentro del presupuesto. Las
+# ligas además se consultan de forma perezosa (solo si Polymarket tiene
+# partidos de esa liga), así que el consumo real es menor.
+CACHE_SEGUNDOS = 6 * 3600
 # Las casas "sharp" (línea afilada, límites altos) pesan más que las
 # recreativas. Pinnacle es la referencia mundial.
 CASAS_SHARP = ("pinnacle", "betonlineag", "lowvig")
@@ -50,6 +55,9 @@ class LineaJuego:
     prob_visitante: float
     casas: int              # cuántas casas respaldan la línea
     sharp: bool             # True si viene de una casa sharp
+    # Fútbol: probabilidad del empate (None en deportes a dos resultados).
+    # OJO: en fútbol prob_local es P(gana el local), NO 1 - P(visitante).
+    prob_empate: float | None = None
 
 
 def consenso(eventos: list[dict]) -> list[LineaJuego]:
@@ -63,30 +71,43 @@ def consenso(eventos: list[dict]) -> list[LineaJuego]:
         visitante = ev.get("away_team") or ""
         if not local or not visitante:
             continue
-        por_casa: dict[str, tuple[float, float]] = {}
+        por_casa: dict[str, tuple[float, float, float | None]] = {}
         for casa in ev.get("bookmakers") or []:
             for mercado in casa.get("markets") or []:
                 if mercado.get("key") != "h2h":
                     continue
                 precios = {o.get("name"): float(o.get("price") or 0)
                            for o in mercado.get("outcomes") or []}
-                if local in precios and visitante in precios:
+                if local not in precios or visitante not in precios:
+                    continue
+                if "Draw" in precios:
+                    # Fútbol: tres resultados, el de-vig va sobre los tres.
+                    probs = devig([precios[local], precios[visitante],
+                                   precios["Draw"]])
+                    if probs:
+                        por_casa[casa.get("key") or ""] = (
+                            probs[0], probs[1], probs[2])
+                else:
                     probs = devig([precios[local], precios[visitante]])
                     if probs:
-                        por_casa[casa.get("key") or ""] = (probs[0], probs[1])
+                        por_casa[casa.get("key") or ""] = (
+                            probs[0], probs[1], None)
         if not por_casa:
             continue
         sharp = next((c for c in CASAS_SHARP if c in por_casa), None)
         if sharp:
-            p_local, p_visit = por_casa[sharp]
+            p_local, p_visit, p_empate = por_casa[sharp]
         else:
             p_local = statistics.median(v[0] for v in por_casa.values())
             p_visit = statistics.median(v[1] for v in por_casa.values())
+            empates = [v[2] for v in por_casa.values() if v[2] is not None]
+            p_empate = statistics.median(empates) if empates else None
         fuera.append(LineaJuego(
             local=local, visitante=visitante,
             inicio_utc=ev.get("commence_time") or "",
             prob_local=p_local, prob_visitante=p_visit,
-            casas=len(por_casa), sharp=sharp is not None))
+            casas=len(por_casa), sharp=sharp is not None,
+            prob_empate=p_empate))
     return fuera
 
 
@@ -121,3 +142,27 @@ class OddsClient:
         log.info("odds: %d juegos de %s con línea sharp/consenso",
                  len(resultado), deporte)
         return resultado
+
+
+# Palabras que no identifican a un equipo (adornos de nombre oficial).
+_GENERICAS = {"fc", "cf", "sc", "afc", "cd", "ac", "club", "de", "the",
+              "deportivo", "real", "athletic", "atletico", "united"}
+
+
+def nombre_coincide(nombre_odds: str, pregunta: str) -> bool:
+    """¿El equipo de la casa de apuestas es el de la pregunta de Polymarket?
+
+    Compara por palabras distintivas: de "Deportivo Toluca" queda "toluca",
+    y debe aparecer completa en la pregunta. Las genéricas solas no valen:
+    "United" no identifica nada, pero "Manchester United" exige que
+    "manchester" esté en la pregunta (y eso no confunde City con United
+    porque también se exige cada palabra NO genérica del nombre).
+    """
+    import re as _re
+    palabras = [w for w in _re.findall(r"[a-zá-ú]+", nombre_odds.lower())]
+    distintivas = [w for w in palabras if w not in _GENERICAS]
+    if not distintivas:
+        distintivas = palabras          # nombre hecho solo de genéricas
+    texto = pregunta.lower()
+    return all(_re.search(rf"\b{_re.escape(w)}\b", texto)
+               for w in distintivas)

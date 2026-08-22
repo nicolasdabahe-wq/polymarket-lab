@@ -185,3 +185,55 @@ def test_techo_de_entrada_deja_fuera_las_apuestas_de_centavos():
     # (Blue Jays a 0.68 dio +5.72).
     assert 0.95 > techo and 0.92 > techo
     assert 0.68 <= techo
+
+
+# --- escudo sharp sobre las copias (caso Brentford, 2026-08-22) ---
+
+def test_escudo_sharp_frena_copias_caras(tmp_path):
+    """El bot compró NO de Brentford a 0.58 cuando la línea sharp decía
+    0.535: pagó 4,5 puntos de más. Con el escudo, esa copia no pasa."""
+    from datetime import datetime, timezone
+
+    from pmbot.db import connect
+    from pmbot.strategies.copy_trading import CopyTradingStrategy
+
+    conn = connect(tmp_path / "s.db")
+    ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with conn:
+        conn.execute("INSERT INTO sharp_lines VALUES (?,?,?,?)",
+                     ("0xbrentford", 0.465, "sharp", ahora))
+    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
+    s.conn = conn
+    s.sharp_tolerance = 0.04
+    s.sharp_max_age_h = 8.0
+    # NO (índice 1): la línea dice 1-0.465 = 0.535
+    justo = s._precio_justo_sharp("0xbrentford", 1)
+    assert justo == pytest.approx(0.535)
+    assert 0.58 > justo + s.sharp_tolerance          # 0.58 se rechaza
+    assert not 0.56 > justo + s.sharp_tolerance      # 0.56 aún pasa
+
+
+def test_escudo_sharp_ignora_lineas_viejas(tmp_path):
+    from pmbot.db import connect
+    from pmbot.strategies.copy_trading import CopyTradingStrategy
+
+    conn = connect(tmp_path / "v.db")
+    with conn:
+        conn.execute("INSERT INTO sharp_lines VALUES (?,?,?,?)",
+                     ("0xm", 0.50, "sharp", "2026-08-21T00:00:00+00:00"))
+    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
+    s.conn = conn
+    s.sharp_tolerance = 0.04
+    s.sharp_max_age_h = 8.0
+    assert s._precio_justo_sharp("0xm", 0) is None   # vieja: no opina
+
+
+def test_sin_linea_no_se_bloquea_nada(tmp_path):
+    from pmbot.db import connect
+    from pmbot.strategies.copy_trading import CopyTradingStrategy
+
+    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
+    s.conn = connect(tmp_path / "n.db")
+    s.sharp_tolerance = 0.04
+    s.sharp_max_age_h = 8.0
+    assert s._precio_justo_sharp("0xdesconocido", 0) is None

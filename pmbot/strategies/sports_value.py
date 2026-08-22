@@ -169,6 +169,10 @@ class SportsValueStrategy:
         self.ventaja_local = float(cfg.get("ventaja_local", 0.035))
         # Antelación mínima: el modelo no sabe del partido en curso.
         self.minutos_antes = float(cfg.get("min_minutos_antes", 15))
+        # Ligas de fútbol con línea sharp. Cada liga consultada cuesta 1
+        # crédito de The Odds API por llamada: con cache de 6h y tres ligas
+        # más MLB son ~480/mes, dentro del tier gratis de 500.
+        self.ligas_futbol = list(cfg.get("soccer_leagues") or [])
 
     async def _fuerzas(self) -> dict[str, float]:
         temporada = datetime.now(timezone.utc).year
@@ -221,7 +225,142 @@ class SportsValueStrategy:
                 continue
             if desc:
                 ejecutadas.append(desc)
+        ejecutadas.extend(await self._escanear_futbol(ahora))
         return ejecutadas
+
+    # ---------- fútbol con línea sharp ----------
+
+    def _mercados_ganador_futbol(self) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT * FROM markets WHERE active = 1 AND category = 'sports'
+               AND question LIKE 'Will % win on ____-__-__?'""").fetchall()
+
+    async def _escanear_futbol(self, ahora: datetime) -> list[str]:
+        """Compara la línea sharp de cada liga configurada contra los
+        mercados "Will X win on FECHA?" de Polymarket.
+
+        En fútbol NO hay modelo propio de respaldo: sin línea sharp no se
+        opina (el empate hace que cualquier heurística barata mienta).
+        """
+        if not (self.ligas_futbol and self.odds is not None
+                and getattr(self.odds, "enabled", False)):
+            return []
+        mercados = self._mercados_ganador_futbol()
+        if not mercados:
+            return []
+        from ..data.odds import nombre_coincide
+        hechas: list[str] = []
+        for liga in self.ligas_futbol:
+            try:
+                lineas = await self.odds.lineas(liga)
+            except Exception as exc:
+                log.debug("liga %s sin líneas: %s", liga, exc)
+                continue
+            for linea in lineas:
+                try:
+                    inicio = datetime.fromisoformat(
+                        linea.inicio_utc.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if inicio - ahora < timedelta(minutes=self.minutos_antes):
+                    continue
+                for equipo, prob in ((linea.local, linea.prob_local),
+                                     (linea.visitante, linea.prob_visitante)):
+                    fila = self._mercado_del_equipo(
+                        mercados, equipo, inicio, nombre_coincide)
+                    if fila is None:
+                        continue
+                    desc = await self._apostar_binario(
+                        fila, prob,
+                        f"línea sharp {liga} ({linea.casas} casas)", inicio)
+                    if desc:
+                        hechas.append(desc)
+        return hechas
+
+    def _guardar_sharp(self, condition_id: str, prob_first: float,
+                       fuente: str) -> None:
+        """Registra el precio justo del mercado aunque no haya apuesta:
+        las copias lo usan de escudo contra pagar de más."""
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO sharp_lines (condition_id, prob_first, fuente,
+                   updated_at) VALUES (?,?,?,?)
+                   ON CONFLICT(condition_id) DO UPDATE SET
+                     prob_first = excluded.prob_first,
+                     fuente = excluded.fuente,
+                     updated_at = excluded.updated_at""",
+                (condition_id, prob_first, fuente,
+                 datetime.now(timezone.utc).isoformat(timespec="seconds")))
+
+    @staticmethod
+    def _mercado_del_equipo(mercados: list[sqlite3.Row], equipo: str,
+                            inicio: datetime, coincide: Any
+                            ) -> sqlite3.Row | None:
+        """El mercado "Will X win on FECHA?" de ESE equipo y ESE partido.
+        La fecha de la pregunta puede diferir un día del arranque UTC
+        (partidos nocturnos de América), se tolera ±1 día."""
+        import re as _re
+        for fila in mercados:
+            q = fila["question"] or ""
+            if not coincide(equipo, q):
+                continue
+            m = _re.search(r"win on (\d{4}-\d{2}-\d{2})", q)
+            if not m:
+                continue
+            try:
+                fecha = datetime.fromisoformat(m.group(1) + "T00:00:00+00:00")
+            except ValueError:
+                continue
+            if abs((inicio - fecha).total_seconds()) <= 36 * 3600:
+                return fila
+        return None
+
+    async def _apostar_binario(self, fila: sqlite3.Row, prob_yes: float,
+                               fuente: str, inicio: datetime) -> str | None:
+        """Evalúa YES y NO de un mercado binario contra la probabilidad
+        sharp y ejecuta el lado con ventaja, si la hay."""
+        tokens = _json.loads(fila["clob_token_ids"] or "[]")
+        if len(tokens) != 2:
+            return None
+        self._guardar_sharp(fila["condition_id"], prob_yes, fuente)
+        mejor = None
+        for idx, (outcome, prob) in enumerate(
+                (("Yes", prob_yes), ("No", 1.0 - prob_yes))):
+            libro = await self.broker.clob.order_book(tokens[idx])
+            ask = libro.best_ask
+            if ask is None or ask <= 0.02 or ask > self.max_entry:
+                continue
+            ventaja = prob - ask
+            if mejor is None or ventaja > mejor[0]:
+                mejor = (ventaja, idx, outcome, prob, ask)
+        if not mejor or mejor[0] < self.min_edge:
+            return None
+        ventaja, idx, outcome, prob, ask = mejor
+        usdc = kelly_usdc(self.broker.equity(), ask, prob / ask - 1.0,
+                          self.kelly_fraction, self.min_trade_usdc,
+                          self.max_trade_pct)
+        if usdc <= 0:
+            return None
+        razon = (f"{fuente}: {outcome} de «{fila['question'][:45]}» vale "
+                 f"{prob:.0%} y el libro pide {ask:.0%} "
+                 f"(ventaja {ventaja:+.0%})")
+        fill = await self.broker.execute(
+            f"soccer:{fila['condition_id']}:{idx}",
+            OrderRequest(
+                strategy=self.name, condition_id=fila["condition_id"],
+                category="sports", token_id=tokens[idx], outcome=outcome,
+                outcome_index=idx, side="BUY", size=usdc / ask,
+                price=min(ask * 1.02, 0.99), reason=razon,
+                strategy_budget_pct=self.budget_pct,
+                days_to_resolution=max(
+                    (inicio - datetime.now(timezone.utc)).total_seconds()
+                    / 86400, 0.0),
+                meta={"question": fila["question"], "sharp": prob,
+                      "ask": ask}))
+        if fill.status == "FILLED":
+            log.info("SPORTS SHARP: %s", razon)
+            return razon
+        return None
 
     async def _evaluar(self, juego: Any, fuerzas: dict[str, float],
                        ahora: datetime) -> str | None:
@@ -266,6 +405,9 @@ class SportsValueStrategy:
             return None
 
         # Evaluar los dos lados y quedarse con el de más ventaja.
+        self._guardar_sharp(mercado["condition_id"],
+                            p_local if apodo(salidas[0]) == local
+                            else 1.0 - p_local, fuente)
         mejor = None
         for idx, salida in enumerate(salidas):
             clave = apodo(salida)

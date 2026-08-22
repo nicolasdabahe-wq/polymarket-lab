@@ -106,6 +106,16 @@ CREATE TABLE IF NOT EXISTS briefings (
     PRIMARY KEY (briefing_date, category)
 );
 
+-- Líneas sharp (Pinnacle y compañía) por mercado, de-vigueadas. Las
+-- escribe la estrategia deportiva al escanear y las leen las demás como
+-- referencia de precio justo: un escudo contra pagar de más.
+CREATE TABLE IF NOT EXISTS sharp_lines (
+    condition_id TEXT PRIMARY KEY,
+    prob_first   REAL NOT NULL,     -- prob. del outcome de índice 0
+    fuente       TEXT,
+    updated_at   TEXT NOT NULL
+);
+
 -- Portfolio paper: fase 1 solo lleva el saldo; las órdenes llegan en fase 2.
 CREATE TABLE IF NOT EXISTS paper_state (
     key   TEXT PRIMARY KEY,

@@ -187,6 +187,11 @@ strategies:
     consensus_boost: 0.4        # cada wallet extra que coincide suma 40%
     min_trade_usdc: 12.0      # piso por copia
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
+    # Escudo sharp: no copiar pagando más que la línea de las casas
+    # profesionales + esta tolerancia. La primera noche se compró NO de
+    # Brentford a 0.58 con la línea en 0.535: 4,5 puntos regalados.
+    sharp_tolerance: 0.04
+    sharp_max_age_hours: 8
     # Techo de entrada. Comprar a 0.95 es arriesgar $13 para ganar $0.60:
     # hay que acertar 19 de 20 solo para empatar. Con la primera noche real
     # (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando ganaban y
@@ -257,6 +262,15 @@ strategies:
     ventaja_local: 0.035    # el local en MLB gana ~54% de los juegos
     # Solo antes del primer lanzamiento: el modelo no sabe el marcador.
     min_minutos_antes: 15
+    # Fútbol con línea sharp: se comparan estas ligas contra los mercados
+    # "Will X win?" de Polymarket. En fútbol NO hay modelo propio de
+    # respaldo: sin línea no se opina (el empate rompe las heurísticas).
+    # Cada liga cuesta 1 crédito por consulta (cache 6h): con tres ligas
+    # más MLB son ~480/mes de los 500 del tier gratis.
+    soccer_leagues:
+      - soccer_epl
+      - soccer_mexico_ligamx
+      - soccer_italy_serie_a
   # Valor en cripto: modelo de opciones (precio spot + volatilidad real de
   # Coinbase) vs la probabilidad implícita del mercado de Polymarket.
   crypto_value:
