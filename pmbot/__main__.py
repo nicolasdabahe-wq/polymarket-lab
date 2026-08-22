@@ -169,12 +169,18 @@ async def cmd_portfolio(app: App) -> None:
               f"  El bot las cuenta en el equity pero no las toca.")
 
 
-async def cmd_capital(app: App, vender: bool = False) -> None:
+async def cmd_capital(app: App, vender: bool = False,
+                      dias_min: float | None = None) -> None:
     """Cuánto capital está dormido y en qué. Con --vender lo libera.
 
     Con una cuenta chica el dinero parado no compone: una apuesta que se
     resuelve en tres meses secuestra munición que en ese tiempo podría dar
     varias vueltas.
+
+    OJO con qué se vende: --vender solo suelta lo que ya no cumple la
+    política actual (más de max_days_to_resolution), no todo lo que figura
+    como lento. Una posición de diez días que está ganando no es capital
+    muerto, es capital trabajando. Con --dias N se elige otro corte.
     """
     from datetime import datetime, timezone
 
@@ -207,12 +213,27 @@ async def cmd_capital(app: App, vender: bool = False) -> None:
         pnl = p["size"] * (marca - p["avg_price"])
         print(f"{dias:6.0f} {valor:9.2f} {pnl:+9.2f}  "
               f"{(p['question'] or '')[:52]}")
+    corte = (dias_min if dias_min is not None
+             else app.risk.limits.max_days_to_resolution)
+    a_vender = [x for x in lentas if x[0] > corte]
     if not vender:
-        print("\nPara liberar ese capital: "
-              "python -m pmbot capital --vender")
+        if a_vender:
+            libera = sum(v for _, v, _, _ in a_vender)
+            print(f"\nDe eso, ${libera:.2f} está más allá de los {corte:.0f} "
+                  f"días que hoy permite la política.")
+            print("Para liberar SOLO eso:  python -m pmbot capital --vender")
+            print("Para elegir otro corte: python -m pmbot capital --vender "
+                  "--dias 7")
+        else:
+            print(f"\nNada supera los {corte:.0f} días: lo dormido está "
+                  f"dentro de la política y varias posiciones están "
+                  f"trabajando. No hay nada que liberar.")
+        return
+    if not a_vender:
+        print(f"\nNada supera los {corte:.0f} días. No se vende nada.")
         return
     hoy = datetime.now(timezone.utc).date().isoformat()
-    for dias, valor, marca, p in lentas:
+    for dias, valor, marca, p in a_vender:
         fill = await app.broker.execute(
             f"liberar:{p['condition_id']}:{p['outcome_index'] or 0}:{hoy}",
             OrderRequest(
@@ -565,7 +586,10 @@ def main() -> None:
     sub.add_parser("mlb")
     p_cap = sub.add_parser("capital")
     p_cap.add_argument("--vender", action="store_true",
-                       help="vender las posiciones dormidas y liberar el dinero")
+                       help="liberar las posiciones que superan el corte")
+    p_cap.add_argument("--dias", type=float, default=None,
+                       help="corte en días (por defecto, el máximo que "
+                            "permite la política de riesgo)")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -620,7 +644,8 @@ def main() -> None:
             elif args.command == "mlb":
                 await cmd_mlb(app)
             elif args.command == "capital":
-                await cmd_capital(app, vender=args.vender)
+                await cmd_capital(app, vender=args.vender,
+                                  dias_min=args.dias)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":

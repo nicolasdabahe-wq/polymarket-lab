@@ -153,7 +153,11 @@ risk:
   # senador que se define en noviembre secuestra munición que en ese tiempo
   # podría dar diez vueltas. Decisión del dueño (2026-08-22).
   max_days_to_resolution: 21   # nada que tarde más de tres semanas
-  slow_days: 7                 # a partir de una semana ya cuenta como lenta
+  # "Lenta" es más de doce días, no más de una semana: con siete, los
+  # mercados de cripto de fin de mes (que a 10 días son los que MÁS están
+  # rindiendo) contaban como capital muerto y bloqueaban a la estrategia
+  # que mejor funciona. Calibrado con la cartera real del 2026-08-22.
+  slow_days: 12
   max_pct_slow: 0.20           # máximo 20% del capital dormido
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.

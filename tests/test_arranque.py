@@ -53,5 +53,5 @@ def test_el_estado_del_portfolio_se_calcula(app):
 def test_los_limites_de_velocidad_llegan_del_config(app):
     limites = app.risk.limits
     assert limites.max_days_to_resolution == 21
-    assert limites.slow_days == 7
+    assert limites.slow_days == 12
     assert limites.max_pct_slow == pytest.approx(0.20)
