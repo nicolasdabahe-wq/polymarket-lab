@@ -76,3 +76,67 @@ def test_normalize_positive_bounds():
 
 def test_empty_input():
     assert score_wallets([], WEIGHTS, FILTERS) == []
+
+
+# --- alcance de la revalidación (hueco encontrado en producción) ---
+
+def test_revalidacion_alcanza_a_las_descubiertas(tmp_path):
+    """Las wallets habilitadas que no salen del leaderboard también deben
+    reevaluarse: si no, conservan el veredicto del criterio viejo. Así fue
+    como una que hace mercado siguió en el carril rápido (2026-08-22)."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.validator import WalletValidator
+
+    conn = connect(tmp_path / "v.db")
+    with conn:
+        # una del leaderboard y otra descubierta (fuera del ranking)
+        conn.execute("""INSERT INTO wallet_ranking (wallet, username, score,
+                        passed_filters, ranked_at) VALUES
+                        ('0xdelranking', 'Fulano', 0.7, 1, '2026-08-22')""")
+        conn.execute("""INSERT INTO wallet_backtest (wallet, roi, verdict,
+                        tested_at) VALUES
+                        ('0xdescubierta', 0.05, 'copiable', '2026-08-22')""")
+
+    pedidas: list[str] = []
+
+    class FakeBacktester:
+        async def run_multi(self, wallet, days, stake_usdc, thresholds):
+            pedidas.append(wallet)
+            raise RuntimeError("corta acá: solo interesa a quién se llamó")
+
+    v = WalletValidator(conn, FakeBacktester(),
+                        {"validation": {"enabled": True,
+                                        "discovery": {"enabled": False}}})
+    asyncio.run(v.validate_ranked(force=True))
+    assert set(pedidas) == {"0xdelranking", "0xdescubierta"}
+
+
+def test_revalidacion_no_repite_wallets(tmp_path):
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.validator import WalletValidator
+
+    conn = connect(tmp_path / "v2.db")
+    with conn:
+        conn.execute("""INSERT INTO wallet_ranking (wallet, username, score,
+                        passed_filters, ranked_at) VALUES
+                        ('0xrepetida', 'Fulano', 0.7, 1, '2026-08-22')""")
+        conn.execute("""INSERT INTO wallet_backtest (wallet, roi, verdict,
+                        tested_at) VALUES
+                        ('0xrepetida', 0.05, 'copiable', '2026-08-22')""")
+
+    pedidas: list[str] = []
+
+    class FakeBacktester:
+        async def run_multi(self, wallet, days, stake_usdc, thresholds):
+            pedidas.append(wallet)
+            raise RuntimeError("corta acá")
+
+    v = WalletValidator(conn, FakeBacktester(),
+                        {"validation": {"enabled": True,
+                                        "discovery": {"enabled": False}}})
+    asyncio.run(v.validate_ranked(force=True))
+    assert pedidas == ["0xrepetida"]

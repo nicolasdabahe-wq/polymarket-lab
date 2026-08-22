@@ -104,12 +104,27 @@ class WalletValidator:
             (self.max_wallets,)).fetchall()
         pending = [(r["wallet"], r["username"]) for r in rows
                    if force or self._needs_test(r["wallet"])]
+        # Las que ya están habilitadas pero NO salen del leaderboard (las
+        # descubiertas en mercados calientes) también hay que reevaluarlas:
+        # si no, conservan para siempre el veredicto con el criterio viejo.
+        # Así fue como una wallet que hace mercado siguió en el carril
+        # rápido después de agregar el perfil de operador (2026-08-22).
+        for r in self.conn.execute(
+                "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'"):
+            if force or self._needs_test(r["wallet"]):
+                pending.append((r["wallet"], ""))
         # Sumar candidatas activas descubiertas en los mercados calientes.
         try:
             for wallet in await self.discover_candidates():
                 pending.append((wallet, ""))
         except Exception as exc:
             log.warning("descubrimiento de wallets falló: %s", exc)
+        # Una sola vez cada una, conservando el nombre si lo tenemos.
+        vistas: dict[str, str] = {}
+        for wallet, username in pending:
+            if wallet not in vistas or (username and not vistas[wallet]):
+                vistas[wallet] = username
+        pending = list(vistas.items())
         if not pending:
             return []
         log.info("validando %d wallets por backtest", len(pending))
