@@ -106,6 +106,6 @@ def build_app(cfg: Config) -> App:
         crypto_value=CryptoValueStrategy(conn, PriceFeed(http), broker,
                                          strategies_cfg.get("crypto_value") or {}),
         sports_value=SportsValueStrategy(
-            conn, MlbClient(http), gamma, broker,
+            conn, MlbClient(http), GammaClient(http), broker,
             strategies_cfg.get("sports_value") or {}, MarketStore(conn)),
     )
