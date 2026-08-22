@@ -184,6 +184,9 @@ MIGRATIONS = [
     "ALTER TABLE signals ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE wallet_backtest ADD COLUMN min_usdc REAL",
     "ALTER TABLE orders ADD COLUMN sent INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE wallet_backtest ADD COLUMN perfil TEXT",
+    "ALTER TABLE wallet_backtest ADD COLUMN trades_por_dia REAL",
+    "ALTER TABLE wallet_backtest ADD COLUMN mediana_usdc REAL",
 ]
 
 

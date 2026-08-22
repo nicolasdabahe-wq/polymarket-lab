@@ -170,6 +170,9 @@ class CopyBacktester:
                 wallet=wallet, days_requested=days,
                 days_covered=base.days_covered,
                 n_wallet_trades=base.n_wallet_trades, trades=sim)
+            # Los trades crudos viajan con cada informe: el validador los usa
+            # para el perfil de operador sin volver a bajarlos.
+            out[th]._raw_trades = raw_trades   # type: ignore[attr-defined]
         return out
 
     async def run(self, wallet: str, days: int = 90, stake_usdc: float = 8.0,

@@ -15,7 +15,7 @@
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
-  python -m pmbot validate-wallets   # backtestea el ranking y habilita a quién copiar
+  python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
   python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
@@ -166,16 +166,18 @@ async def cmd_portfolio(app: App) -> None:
               f"  El bot las cuenta en el equity pero no las toca.")
 
 
-async def cmd_validate_wallets(app: App) -> None:
-    results = await app.wallet_validator.validate_ranked()
+async def cmd_validate_wallets(app: App, force: bool = False) -> None:
+    results = await app.wallet_validator.validate_ranked(force=force)
     if not results:
         print("Nada que validar (ya testeadas recientemente o ranking vacío).")
     for r in sorted(results, key=lambda x: -(x["roi"] or 0)):
         wr = f"{r['win_rate']:.0%}" if r["win_rate"] is not None else "—"
         mark = {"copiable": "✅", "rechazada": "❌"}.get(r["verdict"], "⚪")
+        motivo = (f" [creador de mercado: {r['detalle']}]"
+                  if r.get("perfil") == "creador_de_mercado" else "")
         print(f"{mark} {(r['username'] or r['wallet'][:12]):<22} "
               f"ROI {r['roi']:+7.1%} | WR {wr:>4} | {r['n']:>3} copias "
-              f"→ {r['verdict']}")
+              f"→ {r['verdict']}{motivo}")
     rows = app.conn.execute(
         "SELECT COUNT(*) c FROM wallet_backtest WHERE verdict='copiable'").fetchone()
     print(f"\nWallets habilitadas para copia: {rows['c']}")
@@ -386,7 +388,9 @@ def main() -> None:
     sub.add_parser("live-check")
     sub.add_parser("notify-test")
     sub.add_parser("test-trade")
-    sub.add_parser("validate-wallets")
+    p_val = sub.add_parser("validate-wallets")
+    p_val.add_argument("--force", action="store_true",
+                       help="reevaluar a todas, sin esperar la ventana de 24h")
     sub.add_parser("diagnose")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
@@ -436,7 +440,7 @@ def main() -> None:
                 from .diagnose import diagnose
                 await diagnose()
             elif args.command == "validate-wallets":
-                await cmd_validate_wallets(app)
+                await cmd_validate_wallets(app, force=args.force)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":

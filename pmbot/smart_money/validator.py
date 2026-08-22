@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..backtest import CopyBacktester
+from .behavior import perfil_operador
 
 log = logging.getLogger("pmbot.smart_money.validator")
 
@@ -89,8 +90,12 @@ class WalletValidator:
             log.info("descubiertas %d wallets activas desde holders", len(found))
         return found
 
-    async def validate_ranked(self) -> list[dict[str, Any]]:
-        """Testea las wallets del ranking que lo necesiten. Devuelve resumen."""
+    async def validate_ranked(self, force: bool = False) -> list[dict[str, Any]]:
+        """Testea las wallets del ranking que lo necesiten. Devuelve resumen.
+
+        force ignora la ventana de revalidación: sirve para reevaluar a todas
+        cuando cambian los criterios (por ejemplo al agregar el perfil de
+        operador) sin esperar 24 horas."""
         if not self.enabled:
             return []
         rows = self.conn.execute(
@@ -98,7 +103,7 @@ class WalletValidator:
                WHERE passed_filters = 1 ORDER BY score DESC LIMIT ?""",
             (self.max_wallets,)).fetchall()
         pending = [(r["wallet"], r["username"]) for r in rows
-                   if self._needs_test(r["wallet"])]
+                   if force or self._needs_test(r["wallet"])]
         # Sumar candidatas activas descubiertas en los mercados calientes.
         try:
             for wallet in await self.discover_candidates():
@@ -140,27 +145,47 @@ class WalletValidator:
                 verdict = "copiable"
             else:
                 verdict = "rechazada"
+            # Perfil de operador: un creador de mercado es incopiable por
+            # más ROI que muestre el backtest. Cuando reaccionamos a su
+            # orden, él ya movió su cotización.
+            perfil = perfil_operador(
+                getattr(best_rep, "_raw_trades", None) or [])
+            if perfil and perfil.es_creador_de_mercado:
+                verdict = "rechazada"
+
             report, roi = best_rep, best_roi
             n = len(report.trades)
             wr = report.win_rate
             with self.conn:
                 self.conn.execute(
                     """INSERT INTO wallet_backtest (wallet, roi, win_rate,
-                       n_copies, days_covered, verdict, min_usdc, tested_at)
-                       VALUES (?,?,?,?,?,?,?,?)
+                       n_copies, days_covered, verdict, min_usdc, perfil,
+                       trades_por_dia, mediana_usdc, tested_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)
                        ON CONFLICT(wallet) DO UPDATE SET
                          roi=excluded.roi, win_rate=excluded.win_rate,
                          n_copies=excluded.n_copies,
                          days_covered=excluded.days_covered,
                          verdict=excluded.verdict, min_usdc=excluded.min_usdc,
+                         perfil=excluded.perfil,
+                         trades_por_dia=excluded.trades_por_dia,
+                         mediana_usdc=excluded.mediana_usdc,
                          tested_at=excluded.tested_at""",
                     (wallet, roi, wr, n, report.days_covered, verdict, best_th,
+                     perfil.etiqueta if perfil else None,
+                     perfil.trades_por_dia if perfil else None,
+                     perfil.mediana_usdc if perfil else None,
                      datetime.now(timezone.utc).isoformat(timespec="seconds")))
             results.append({"wallet": wallet, "username": username, "roi": roi,
                             "win_rate": wr, "n": n, "verdict": verdict,
-                            "min_usdc": best_th})
-            log.info("backtest %s: ROI %+.1f%% en %d copias (umbral $%.0f) -> %s",
-                     username or wallet[:10], roi * 100, n, best_th or 0, verdict)
+                            "min_usdc": best_th,
+                            "perfil": perfil.etiqueta if perfil else "",
+                            "detalle": perfil.resumen() if perfil else ""})
+            log.info("backtest %s: ROI %+.1f%% en %d copias (umbral $%.0f) "
+                     "-> %s%s", username or wallet[:10], roi * 100, n,
+                     best_th or 0, verdict,
+                     f" [creador de mercado: {perfil.resumen()}]"
+                     if perfil and perfil.es_creador_de_mercado else "")
             await asyncio.sleep(1)  # respirar entre wallets (rate limits)
         return results
 
