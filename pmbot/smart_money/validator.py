@@ -19,6 +19,7 @@ from typing import Any
 
 from ..backtest import CopyBacktester
 from .behavior import perfil_operador
+from .seleccion import Opcion, elegir_umbral
 
 log = logging.getLogger("pmbot.smart_money.validator")
 
@@ -139,34 +140,25 @@ class WalletValidator:
                 log.warning("backtest de %s falló: %s", wallet[:10], exc)
                 continue
 
-            # Elegir el umbral de tamaño más rentable con muestra suficiente:
-            # muchas wallets ganan solo en sus apuestas de convicción.
-            best_th, best_roi, best_rep = None, None, None
+            # Umbral y veredicto: exige muestra suficiente y que gane en la
+            # mayoría de los umbrales, no un pico suelto (ver seleccion.py).
+            opciones = []
             for th, rep in sorted(reports.items()):
-                n_th = len(rep.trades)
-                if n_th < self.min_copies:
-                    continue
                 staked_th = rep.total_staked
-                roi_th = ((rep.realized_pnl + rep.unrealized_pnl) / staked_th
-                          if staked_th > 0 else 0.0)
-                if best_roi is None or roi_th > best_roi:
-                    best_th, best_roi, best_rep = th, roi_th, rep
-            if best_rep is None:
-                # ningún umbral con muestra suficiente
-                fallback = reports[min(reports)]
-                best_th, best_roi, best_rep = min(reports), 0.0, fallback
-                verdict = "sin_datos"
-            elif best_roi >= self.min_roi:
-                verdict = "copiable"
-            else:
-                verdict = "rechazada"
-            # Perfil de operador: un creador de mercado es incopiable por
-            # más ROI que muestre el backtest. Cuando reaccionamos a su
-            # orden, él ya movió su cotización.
+                opciones.append(Opcion(
+                    umbral=th, copias=len(rep.trades),
+                    roi=((rep.realized_pnl + rep.unrealized_pnl) / staked_th
+                         if staked_th > 0 else 0.0)))
+            eleccion = elegir_umbral(opciones, self.min_copies, self.min_roi)
+            best_th, best_roi = eleccion.umbral, eleccion.roi
+            verdict = eleccion.veredicto
+            best_rep = reports.get(best_th) or reports[min(reports)]
+            # El perfil de operador se guarda como contexto, NO decide: una
+            # wallet de alta frecuencia con apuestas grandes rentables sí es
+            # copiable en esas apuestas grandes (BreakTheBank e ImJustKen
+            # ganan en TODOS los umbrales). Quien decide es la evidencia.
             perfil = perfil_operador(
                 getattr(best_rep, "_raw_trades", None) or [])
-            if perfil and perfil.es_creador_de_mercado:
-                verdict = "rechazada"
 
             report, roi = best_rep, best_roi
             n = len(report.trades)
@@ -193,14 +185,12 @@ class WalletValidator:
                      datetime.now(timezone.utc).isoformat(timespec="seconds")))
             results.append({"wallet": wallet, "username": username, "roi": roi,
                             "win_rate": wr, "n": n, "verdict": verdict,
-                            "min_usdc": best_th,
+                            "min_usdc": best_th, "motivo": eleccion.motivo,
                             "perfil": perfil.etiqueta if perfil else "",
                             "detalle": perfil.resumen() if perfil else ""})
             log.info("backtest %s: ROI %+.1f%% en %d copias (umbral $%.0f) "
-                     "-> %s%s", username or wallet[:10], roi * 100, n,
-                     best_th or 0, verdict,
-                     f" [creador de mercado: {perfil.resumen()}]"
-                     if perfil and perfil.es_creador_de_mercado else "")
+                     "-> %s (%s)", username or wallet[:10], roi * 100, n,
+                     best_th or 0, verdict, eleccion.motivo)
             await asyncio.sleep(1)  # respirar entre wallets (rate limits)
         return results
 

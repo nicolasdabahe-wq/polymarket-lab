@@ -43,9 +43,16 @@ smart_money:
     stake_usdc: 16          # tamaño simulado por copia
     # Umbrales de tamaño a probar: se elige el más rentable por wallet
     # (muchas ganan solo en sus apuestas de convicción).
-    thresholds: [150, 300, 500, 1000, 2000]
+    # Se prueban todos y se elige el mejor CON muestra suficiente. Los
+    # umbrales altos importan para las ballenas: BreakTheBank rinde +15.1%
+    # copiando solo lo que mete arriba de $2.000, y sigue en positivo a
+    # $5.000 y $10.000.
+    thresholds: [150, 300, 500, 1000, 2000, 5000]
     min_roi: 0.0            # habilita si copiarla habría dado >= 0%
-    min_copies: 5           # muestra mínima para dar veredicto
+    # Muestra mínima por umbral. Con 5 cualquiera parece un genio:
+    # sainttroplay mostraba +77.5% con SEIS copias y rn1 +23.8% con UNA.
+    # Con 20, solo hablan las wallets que de verdad demostraron algo.
+    min_copies: 20
     max_wallets_per_run: 40
     revalidate_hours: 24
     # Descubrimiento: wallets con posiciones grandes en los mercados más

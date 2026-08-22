@@ -194,10 +194,13 @@ def cmd_wallets(app: App) -> None:
     print(f"\n⚡ = carril rápido. El resto se vigila con la cinta (60s) "
           f"y el barrido (5 min).")
     rech = app.conn.execute(
-        """SELECT COUNT(*) c FROM wallet_backtest
-           WHERE verdict = 'rechazada' AND perfil = 'creador_de_mercado'"""
+        "SELECT COUNT(*) c FROM wallet_backtest WHERE verdict = 'rechazada'"
     ).fetchone()["c"]
-    print(f"Descartadas por hacer mercado (imposibles de copiar): {rech}")
+    sin = app.conn.execute(
+        "SELECT COUNT(*) c FROM wallet_backtest WHERE verdict = 'sin_datos'"
+    ).fetchone()["c"]
+    print(f"Rechazadas por no ser rentables o consistentes: {rech}")
+    print(f"Sin muestra suficiente para opinar: {sin}")
 
 
 async def cmd_validate_wallets(app: App, force: bool = False) -> None:
@@ -207,8 +210,7 @@ async def cmd_validate_wallets(app: App, force: bool = False) -> None:
     for r in sorted(results, key=lambda x: -(x["roi"] or 0)):
         wr = f"{r['win_rate']:.0%}" if r["win_rate"] is not None else "—"
         mark = {"copiable": "✅", "rechazada": "❌"}.get(r["verdict"], "⚪")
-        motivo = (f" [creador de mercado: {r['detalle']}]"
-                  if r.get("perfil") == "creador_de_mercado" else "")
+        motivo = f"  ({r.get('motivo', '')})" if r.get("motivo") else ""
         print(f"{mark} {(r['username'] or r['wallet'][:12]):<22} "
               f"ROI {r['roi']:+7.1%} | WR {wr:>4} | {r['n']:>3} copias "
               f"→ {r['verdict']}{motivo}")
