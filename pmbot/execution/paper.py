@@ -139,13 +139,14 @@ class PaperBroker:
         by_category: dict[str, float] = {}
         by_wallet: dict[str, float] = {}
         by_strategy: dict[str, float] = {}
-        held: dict[str, set[int]] = {}
+        held: dict[str, dict[int, float]] = {}
         positions_value = 0.0
         for p in self.positions():
             value = p["size"] * self.mark_price(
                 p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
             positions_value += value
-            held.setdefault(p["condition_id"], set()).add(p["outcome_index"] or 0)
+            held.setdefault(p["condition_id"], {})[p["outcome_index"] or 0] = \
+                float(p["avg_price"])
             by_market[p["condition_id"]] = by_market.get(p["condition_id"], 0) + value
             by_category[p["category"] or "other"] = \
                 by_category.get(p["category"] or "other", 0) + value

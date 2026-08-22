@@ -80,16 +80,21 @@ class PortfolioState:
     exposure_by_wallet: dict[str, float]
     exposure_by_strategy: dict[str, float]
     starting_equity: float = 0.0
-    # Qué outcome tenemos ya en cada mercado: {condition_id: {0, 1}}.
-    # Sirve para no comprar los dos lados del mismo partido ni recargar
-    # una posición persiguiendo el precio.
-    held_outcomes: dict[str, set[int]] = field(default_factory=dict)
+    # Precio promedio de lo que ya tenemos en cada mercado:
+    # {condition_id: {outcome_index: avg_price}}. Sirve para no pagar más
+    # de $1 entre los dos lados del mismo evento.
+    held_outcomes: dict[str, dict[int, float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class RiskDecision:
     approved: bool
     reason: str
+
+
+# Costo máximo del par YES+NO que todavía deja ganancia (deja margen para
+# el tick y el redondeo).
+MAX_PAR_COST = 0.98
 
 
 def evaluate(order: OrderRequest, state: PortfolioState,
@@ -108,21 +113,21 @@ def evaluate(order: OrderRequest, state: PortfolioState,
     if cost > state.cash:
         return RiskDecision(False, f"cash insuficiente (${state.cash:.2f})")
 
-    # Un mercado, una posición. El arbitraje es la excepción: compra las dos
-    # patas a propósito y solo cuando la suma de precios es menor a 1.
-    if order.strategy != "arbitrage":
-        held = state.held_outcomes.get(order.condition_id) or set()
-        if held and order.outcome_index not in held:
-            # Comprar el lado contrario de algo que ya tenemos es pagar más
-            # de $1 por algo que paga $1: pierde gane quien gane.
+    # Los dos lados del mismo evento solo si JUNTOS cuestan menos de $1.
+    # Comprar Musetti a 0.50 y Tiafoe a 0.69 es pagar 1.19 por algo que paga
+    # 1.00: se pierde gane quien gane. Pero si el rival se desploma a 0.25,
+    # el par asegura ganancia y hay que dejarlo pasar.
+    # Recargar el MISMO lado no se toca: es convicción, no contradicción.
+    opuestos = [p for idx, p in
+                (state.held_outcomes.get(order.condition_id) or {}).items()
+                if idx != order.outcome_index]
+    if opuestos:
+        par = min(opuestos) + order.price
+        if par > MAX_PAR_COST:
             return RiskDecision(
-                False, "ya tenemos el lado contrario de este mercado: "
-                       "comprar ambos lados garantiza pérdida")
-        if order.outcome_index in held:
-            # Recargar mientras el precio corre fue lo que convirtió pérdidas
-            # chicas en grandes (perseguir un partido en vivo).
-            return RiskDecision(
-                False, "ya tenemos posición en este mercado: no se recarga")
+                False, f"ya tenemos el otro lado a {min(opuestos):.2f}; "
+                       f"con esta entrada a {order.price:.2f} el par cuesta "
+                       f"{par:.2f} y solo paga 1.00")
 
     if (state.day_start_equity > 0 and
             equity <= state.day_start_equity * (1 - limits.daily_stop_loss_pct)):

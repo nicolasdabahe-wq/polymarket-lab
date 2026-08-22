@@ -175,18 +175,12 @@ def test_invalid_prices_block():
 
 # --- techo de entrada y deportes en vivo en las copias ---
 
-def test_techo_de_entrada_configurable():
-    from pmbot.strategies.copy_trading import CopyTradingStrategy
-    cfg = {"max_entry_price": 0.80, "sports_only_prematch": True}
-    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
-    s.max_entry = float(cfg["max_entry_price"])
-    s.prematch_only_sports = bool(cfg["sports_only_prematch"])
-    # Las entradas de anoche: 0.95 y 0.92 quedan fuera; 0.57 y 0.68 entran.
-    assert 0.95 > s.max_entry and 0.92 > s.max_entry
-    assert 0.57 <= s.max_entry and 0.68 <= s.max_entry
-
-
-def test_categorias_deportivas_incluyen_esports():
-    from pmbot.strategies.copy_trading import SPORT_CATEGORIES
-    # El Dota 2 (-9.80) cae en esports: también debe filtrarse en vivo.
-    assert {"sports", "esports"} <= SPORT_CATEGORIES
+def test_techo_de_entrada_deja_fuera_las_apuestas_de_centavos():
+    from pmbot.config import load_config
+    cfg = load_config("config.yaml").section(
+        "strategies")["copy_trading"]
+    techo = float(cfg["max_entry_price"])
+    # Entradas reales del 2026-08-22: las de +0.50/+0.60 quedan fuera,
+    # las que dieron +3.33 y +5.26 siguen entrando.
+    assert 0.95 > techo and 0.92 > techo
+    assert 0.79 <= techo and 0.85 <= techo and 0.68 <= techo

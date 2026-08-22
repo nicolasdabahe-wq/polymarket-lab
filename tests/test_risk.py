@@ -120,36 +120,37 @@ def test_min_order_floor_ten_dollars():
     assert evaluate(order(size=24, price=0.5), s, LIMITS_DD).approved  # $12
 
 
-# --- un mercado, una posición (casos reales del 2026-08-22) ---
+# --- los dos lados del mismo evento (casos reales del 2026-08-22) ---
 
-def test_no_comprar_el_lado_contrario():
-    """Musetti: compró Musetti a 0.50 y después Tiafoe a 0.69. Pagar 1.19
-    por algo que paga 1.00 pierde gane quien gane."""
-    s = state(held_outcomes={"0xm1": {0}})
-    d = evaluate(order(outcome_index=1, outcome="No"), s, LIMITS)
-    assert not d.approved and "lado contrario" in d.reason
+def test_no_pagar_mas_de_un_dolar_entre_los_dos_lados():
+    """Musetti: compró Musetti a 0.50 y después Tiafoe a 0.69. El par cuesta
+    1.19 y solo paga 1.00: pierde gane quien gane."""
+    s = state(held_outcomes={"0xm1": {0: 0.50}})
+    d = evaluate(order(outcome_index=1, outcome="No", price=0.69), s, LIMITS)
+    assert not d.approved and "el par cuesta" in d.reason
 
 
-def test_no_recargar_persiguiendo_el_precio():
-    """Tiafoe: entró a 0.69 y volvió a entrar a 0.92 con el partido
-    corriendo. La segunda entrada solo agranda la pérdida."""
-    s = state(held_outcomes={"0xm1": {0}})
-    d = evaluate(order(outcome_index=0), s, LIMITS)
-    assert not d.approved and "no se recarga" in d.reason
+def test_el_otro_lado_si_asegura_ganancia_pasa():
+    # Musetti a 0.50 y el rival se desploma a 0.25: el par cuesta 0.75 y
+    # paga 1.00 gane quien gane. Eso hay que dejarlo entrar.
+    s = state(held_outcomes={"0xm1": {0: 0.50}})
+    assert evaluate(order(outcome_index=1, outcome="No", price=0.25),
+                    s, LIMITS).approved
+
+
+def test_recargar_el_mismo_lado_esta_permitido():
+    """Convicción, no contradicción: entrar a 0.50 y sumar a 0.60 (o a 0.20
+    si cae) es una tesis, y el dueño la quiere habilitada."""
+    s = state(held_outcomes={"0xm1": {0: 0.50}})
+    assert evaluate(order(outcome_index=0, price=0.60), s, LIMITS).approved
+    assert evaluate(order(outcome_index=0, price=0.20), s, LIMITS).approved
 
 
 def test_primera_entrada_en_el_mercado_pasa():
-    assert evaluate(order(), state(held_outcomes={"0xotro": {0}}),
+    assert evaluate(order(), state(held_outcomes={"0xotro": {0: 0.4}}),
                     LIMITS).approved
 
 
-def test_arbitraje_si_puede_comprar_ambos_lados():
-    # Es su razón de existir: compra las dos patas cuando suman < 1.
-    s = state(held_outcomes={"0xm1": {0}})
-    d = evaluate(order(strategy="arbitrage", outcome_index=1), s, LIMITS)
-    assert d.approved
-
-
 def test_vender_no_se_bloquea_por_tener_posicion():
-    s = state(held_outcomes={"0xm1": {0}})
+    s = state(held_outcomes={"0xm1": {0: 0.50}})
     assert evaluate(order(side="SELL"), s, LIMITS).approved

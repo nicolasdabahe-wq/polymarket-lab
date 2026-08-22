@@ -147,12 +147,15 @@ strategies:
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     # Techo de entrada. Comprar a 0.95 es arriesgar $13 para ganar $0.60:
     # hay que acertar 19 de 20 solo para empatar. Con la primera noche real
-    # de datos (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando
-    # ganaban y -13 cuando perdían.
-    max_entry_price: 0.80
-    # Deportes SOLO antes del arranque, igual que el consenso: en vivo la
-    # wallet copiada scalpea y para cuando copiamos el precio ya voló.
-    sports_only_prematch: true
+    # (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando ganaban y
+    # -13 cuando perdían. A 0.85 se arriesga $13 para ganar $2.30, que ya
+    # es una apuesta de verdad; ahí entraron las que sí ganaron (Gauff,
+    # Blue Jays, Cardinals).
+    max_entry_price: 0.85
+    # El en vivo SÍ se copia: decisión del dueño (2026-08-22). Lo que hacía
+    # daño no era el en vivo sino el precio al que entraba. El techo de
+    # arriba y el tope de slippage son los que cuidan la entrada.
+    sports_only_prematch: false
     min_wallet_score: 0.22
     min_copy_usdc_of_wallet: 150   # ignorar trades chicos de la wallet
     # Score a partir del cual se copia aunque el backtest aún no la validó.
