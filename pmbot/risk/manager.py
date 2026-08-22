@@ -132,6 +132,13 @@ def evaluate(order: OrderRequest, state: PortfolioState,
     # Velocidad del capital: no atar dinero a resoluciones lejanas.
     dias = order.days_to_resolution
     if dias is not None:
+        if dias < -1:
+            # Fecha vencida y el mercado sigue abierto: está en limbo (ej.
+            # una primaria que se fue a segunda vuelta). Peor que lento:
+            # dormido SIN fecha. Así se recompró Nordone el 2026-08-22.
+            return RiskDecision(
+                False, "mercado en limbo: su fecha venció hace "
+                       f"{-dias:.0f} días y sigue sin resolverse")
         if dias > limits.max_days_to_resolution:
             return RiskDecision(
                 False, f"se resuelve en {dias:.0f} días (máx "

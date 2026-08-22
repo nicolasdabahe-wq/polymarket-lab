@@ -204,3 +204,18 @@ def test_vender_una_lenta_siempre_se_puede():
     s = state(exposure_slow=200.0)
     assert evaluate(order(side="SELL", days_to_resolution=90),
                     s, LIMITS_VEL).approved
+
+
+def test_mercado_en_limbo_no_se_compra():
+    """Nordone: endDate vencido hace 11 días, sin resolución (segunda
+    vuelta). El bot la recompró por consenso; los días negativos pasaban
+    todos los filtros de velocidad."""
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=-11),
+                 state(), LIMITS_VEL)
+    assert not d.approved and "limbo" in d.reason
+
+
+def test_recien_vencido_no_cuenta_como_limbo():
+    # Un partido que terminó hace horas aún no liquidado no es limbo.
+    assert evaluate(order(side="SELL", days_to_resolution=-0.3),
+                    state(), LIMITS_VEL).approved
