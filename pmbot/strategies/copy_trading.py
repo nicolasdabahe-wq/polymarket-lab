@@ -226,6 +226,18 @@ class CopyTradingStrategy:
         # compró NO de Brentford a 0.58 cuando la línea decía 0.535.
         self.sharp_tolerance = float(cfg.get("sharp_tolerance", 0.04))
         self.sharp_max_age_h = float(cfg.get("sharp_max_age_hours", 8))
+        # Freno por juicio EN VIVO: una wallet que ya nos costó esto en
+        # dinero real deja de copiarse hasta que la validación diaria la
+        # rehabilite con datos nuevos. El backtest simula copiar los
+        # precios de la wallet, pero un creador de mercado llena DENTRO
+        # del spread y nosotros compramos al ask: su ROI simulado no es el
+        # nuestro (2026-08-22: 0xf03044eb +24% simulado, -$23.61 real).
+        self.live_stop_usdc = float(cfg.get("live_stop_usdc", 15.0))
+        # Esports SOLO antes del arranque: los "Game N Winner" se
+        # resuelven en media hora y son de scalpers (4 de 5 en vivo
+        # perdieron el 2026-08-22).
+        self.esports_prematch_only = bool(
+            cfg.get("esports_prematch_only", True))
 
     @property
     def blacklist(self) -> set[str]:
@@ -240,6 +252,7 @@ class CopyTradingStrategy:
         validated = {r["wallet"] for r in self.conn.execute(
             "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'")}
         trust_score = float(self.cfg.get("trust_without_backtest", 0.60))
+        frenadas = self._wallets_frenadas_en_vivo()
         out: dict[str, float] = {}
         # Sin filtrar por passed_filters: los filtros duros del ranking
         # (antigüedad, nº de trades) descartaban wallets sin mirarles un
@@ -248,7 +261,7 @@ class CopyTradingStrategy:
         for r in self.conn.execute(
                 "SELECT wallet, score FROM wallet_ranking"):
             w, score = r["wallet"], r["score"]
-            if w in self.blacklist or w in rejected:
+            if w in self.blacklist or w in rejected or w in frenadas:
                 continue
             if w in validated or score >= trust_score:
                 out[w] = score
@@ -257,7 +270,7 @@ class CopyTradingStrategy:
         for r in self.conn.execute(
                 "SELECT wallet, roi FROM wallet_backtest WHERE verdict = 'copiable'"):
             w = r["wallet"]
-            if w in self.blacklist or w in out:
+            if w in self.blacklist or w in out or w in frenadas:
                 continue
             out[w] = min(0.50 + max(r["roi"] or 0.0, 0.0), 0.95)
         return out
@@ -303,6 +316,31 @@ class CopyTradingStrategy:
             return None
         p = float(row["prob_first"])
         return p if outcome_index == 0 else 1.0 - p
+
+    def _wallets_frenadas_en_vivo(self) -> set[str]:
+        """Wallets cuyo PnL realizado con NUESTRO dinero cruzó el freno."""
+        if self.live_stop_usdc <= 0:
+            return set()
+        duenos: dict[str, str] = {}
+        acumulado: dict[str, float] = {}
+        for r in self.conn.execute(
+                """SELECT id, condition_id FROM orders
+                   WHERE side = 'BUY' AND id LIKE 'copy:%'"""):
+            partes = r["id"].split(":")
+            if len(partes) >= 2:
+                duenos[r["condition_id"]] = partes[1].lower()
+        for r in self.conn.execute(
+                """SELECT id, condition_id, realized_pnl FROM orders
+                   WHERE status = 'FILLED' AND realized_pnl IS NOT NULL
+                   AND strategy = 'copy_trading'"""):
+            partes = (r["id"] or "").split(":")
+            w = (partes[1].lower() if len(partes) >= 2
+                 and partes[0] in ("copy", "copy-exit")
+                 else duenos.get(r["condition_id"]))
+            if w:
+                acumulado[w] = acumulado.get(w, 0.0) + r["realized_pnl"]
+        return {w for w, pnl in acumulado.items()
+                if pnl <= -self.live_stop_usdc}
 
     def _min_usdc_by_wallet(self) -> dict[str, float]:
         """Umbral de tamaño óptimo por wallet según su backtest."""
@@ -363,6 +401,12 @@ class CopyTradingStrategy:
                 and (market["category"] or "") in SPORT_CATEGORIES
                 and not market_not_started(market)):
             log.info("no copio '%s': deporte ya empezado", cand.title[:40])
+            return None
+        if (self.esports_prematch_only
+                and (market["category"] or "") == "esports"
+                and not market_not_started(market)):
+            log.info("no copio '%s': esports en vivo (scalpers)",
+                     cand.title[:40])
             return None
         justo = self._precio_justo_sharp(cand.condition_id,
                                          cand.outcome_index)

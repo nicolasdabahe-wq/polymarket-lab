@@ -237,3 +237,61 @@ def test_sin_linea_no_se_bloquea_nada(tmp_path):
     s.sharp_tolerance = 0.04
     s.sharp_max_age_h = 8.0
     assert s._precio_justo_sharp("0xdesconocido", 0) is None
+
+
+# --- freno por juicio en vivo (2026-08-22: -$113 en copias en 24h) ---
+
+def _copy_con_freno(tmp_path, ordenes, freno=15.0):
+    from pmbot.db import connect
+    from pmbot.strategies.copy_trading import CopyTradingStrategy
+
+    conn = connect(tmp_path / "freno.db")
+    with conn:
+        for oid, cid, side, pnl in ordenes:
+            conn.execute(
+                """INSERT INTO orders (id, strategy, condition_id, side,
+                   req_size, status, realized_pnl, created_at)
+                   VALUES (?,'copy_trading',?,?,1,'FILLED',?,
+                           '2026-08-22T10:00:00')""",
+                (oid, cid, side, pnl))
+    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
+    s.conn = conn
+    s.live_stop_usdc = freno
+    return s
+
+
+def test_wallet_que_ya_costo_dinero_real_se_frena(tmp_path):
+    """0xf03044eb: +24% en backtest, -$23.61 con dinero real en un día.
+    El dinero real manda: se deja de copiar hasta la próxima validación."""
+    s = _copy_con_freno(tmp_path, [
+        ("copy:0xmala:0xm1:0", "0xm1", "BUY", None),
+        ("redeem:copy_trading:0xm1:0", "0xm1", "REDEEM", -23.61),
+    ])
+    assert s._wallets_frenadas_en_vivo() == {"0xmala"}
+
+
+def test_perdidas_chicas_no_frenan(tmp_path):
+    s = _copy_con_freno(tmp_path, [
+        ("copy:0xok:0xm1:0", "0xm1", "BUY", None),
+        ("redeem:copy_trading:0xm1:0", "0xm1", "REDEEM", -8.0),
+    ])
+    assert s._wallets_frenadas_en_vivo() == set()
+
+
+def test_ganancias_compensan_perdidas(tmp_path):
+    # -20 en una y +12 en otra: neto -8, no cruza el freno de 15.
+    s = _copy_con_freno(tmp_path, [
+        ("copy:0xmix:0xm1:0", "0xm1", "BUY", None),
+        ("redeem:copy_trading:0xm1:0", "0xm1", "REDEEM", -20.0),
+        ("copy:0xmix:0xm2:0", "0xm2", "BUY", None),
+        ("redeem:copy_trading:0xm2:0", "0xm2", "REDEEM", 12.0),
+    ])
+    assert s._wallets_frenadas_en_vivo() == set()
+
+
+def test_freno_apagado_no_frena_a_nadie(tmp_path):
+    s = _copy_con_freno(tmp_path, [
+        ("copy:0xmala:0xm1:0", "0xm1", "BUY", None),
+        ("redeem:copy_trading:0xm1:0", "0xm1", "REDEEM", -99.0),
+    ], freno=0.0)
+    assert s._wallets_frenadas_en_vivo() == set()

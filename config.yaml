@@ -192,6 +192,15 @@ strategies:
     # Brentford a 0.58 con la línea en 0.535: 4,5 puntos regalados.
     sharp_tolerance: 0.04
     sharp_max_age_hours: 8
+    # Freno por juicio EN VIVO: una wallet que ya nos costó esto en dinero
+    # real deja de copiarse. El backtest simula copiar los precios de la
+    # wallet, pero un creador de mercado llena DENTRO del spread y nosotros
+    # compramos al ask: su ROI simulado no es el nuestro. Comprobado el
+    # 2026-08-22: 0xf03044eb daba +24% simulado y costó -$23.61 en un día.
+    live_stop_usdc: 15
+    # Esports SOLO antes del arranque: los "Game N Winner" se resuelven en
+    # media hora y son de scalpers (4 de 5 copias en vivo perdieron hoy).
+    esports_prematch_only: true
     # Techo de entrada. Comprar a 0.95 es arriesgar $13 para ganar $0.60:
     # hay que acertar 19 de 20 solo para empatar. Con la primera noche real
     # (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando ganaban y
