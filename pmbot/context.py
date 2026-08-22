@@ -14,6 +14,7 @@ from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
 from .risk import RiskManager
 from .backtest import CopyBacktester
+from .data.odds import OddsClient
 from .data.sports import MlbClient
 from .smart_money.tape import TradeTape
 from .smart_money import WalletScorer, WalletTracker, WalletValidator
@@ -109,7 +110,8 @@ def build_app(cfg: Config) -> App:
                                          strategies_cfg.get("crypto_value") or {}),
         sports_value=SportsValueStrategy(
             conn, MlbClient(http), GammaClient(http), broker,
-            strategies_cfg.get("sports_value") or {}, MarketStore(conn)),
+            strategies_cfg.get("sports_value") or {}, MarketStore(conn),
+            odds=OddsClient(http, cfg.odds_api_key)),
         ladder_arb=LadderArbStrategy(
             conn, clob, GammaClient(http), broker,
             strategies_cfg.get("ladder_arb") or {}, MarketStore(conn)),

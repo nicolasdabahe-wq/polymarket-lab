@@ -24,6 +24,7 @@ class Config:
     var_dir: Path
     live_trading: bool
     anthropic_api_key: str | None
+    odds_api_key: str | None
     telegram_bot_token: str | None
     telegram_chat_id: str | None
     polymarket_private_key: str | None
@@ -64,6 +65,7 @@ def load_config(config_path: str | Path | None = None) -> Config:
         var_dir=var_dir,
         live_trading=is_live_trading(),
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
+        odds_api_key=os.environ.get("ODDS_API_KEY") or None,
         telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID") or None,
         polymarket_private_key=os.environ.get("POLYMARKET_PRIVATE_KEY") or None,

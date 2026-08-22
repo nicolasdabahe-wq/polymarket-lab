@@ -151,12 +151,13 @@ class SportsValueStrategy:
 
     def __init__(self, conn: sqlite3.Connection, mlb: Any, gamma: Any,
                  broker: Any, cfg: dict[str, Any],
-                 market_store: Any = None) -> None:
+                 market_store: Any = None, odds: Any = None) -> None:
         self.conn = conn
         self.mlb = mlb
         self.gamma = gamma
         self.broker = broker
         self.market_store = market_store
+        self.odds = odds
         self.enabled = bool(cfg.get("enabled", True))
         self.budget_pct = float(cfg.get("budget_pct", 0.25))
         self.min_edge = float(cfg.get("min_edge", 0.08))
@@ -189,6 +190,16 @@ class SportsValueStrategy:
                     self.market_store.upsert_markets(mercados)
             except Exception as exc:
                 log.warning("no pude refrescar mercados de béisbol: %s", exc)
+        # Líneas de las casas profesionales: cuando existen, mandan sobre
+        # nuestro modelo (Pinnacle pone precios mejor que nuestra pitagórica).
+        lineas = []
+        if self.odds is not None and getattr(self.odds, "enabled", False):
+            try:
+                lineas = await self.odds.lineas("baseball_mlb")
+            except Exception as exc:
+                log.debug("odds no disponibles: %s", exc)
+        self._lineas_por_par = {
+            frozenset((apodo(l.local), apodo(l.visitante))): l for l in lineas}
         try:
             fuerzas = await self._fuerzas()
             juegos = []
@@ -226,14 +237,24 @@ class SportsValueStrategy:
         if inicio - ahora < timedelta(minutes=self.minutos_antes):
             return None
 
-        aj_local = ajuste_pitcher(
-            juego.pitcher_local.era, juego.pitcher_local.entradas,
-            self.peso_pitcher) if juego.pitcher_local else 0.0
-        aj_visitante = ajuste_pitcher(
-            juego.pitcher_visitante.era, juego.pitcher_visitante.entradas,
-            self.peso_pitcher) if juego.pitcher_visitante else 0.0
-        p_local = prob_local(fuerzas[local], fuerzas[visitante],
-                             aj_local, aj_visitante, self.ventaja_local)
+        linea = getattr(self, "_lineas_por_par", {}).get(
+            frozenset((local, visitante)))
+        if linea is not None:
+            # La línea sharp de-vigueada ES la probabilidad: nadie pone
+            # este precio mejor que Pinnacle y compañía.
+            p_local = (linea.prob_local if apodo(linea.local) == local
+                       else linea.prob_visitante)
+            fuente = f"línea sharp ({linea.casas} casas)"
+        else:
+            aj_local = ajuste_pitcher(
+                juego.pitcher_local.era, juego.pitcher_local.entradas,
+                self.peso_pitcher) if juego.pitcher_local else 0.0
+            aj_visitante = ajuste_pitcher(
+                juego.pitcher_visitante.era, juego.pitcher_visitante.entradas,
+                self.peso_pitcher) if juego.pitcher_visitante else 0.0
+            p_local = prob_local(fuerzas[local], fuerzas[visitante],
+                                 aj_local, aj_visitante, self.ventaja_local)
+            fuente = "modelo propio"
 
         mercado = self._buscar_mercado(visitante, local, inicio)
         if not mercado:
@@ -279,7 +300,7 @@ class SportsValueStrategy:
             pit = (f"; abridores {juego.pitcher_visitante.nombre} "
                    f"({juego.pitcher_visitante.era}) vs "
                    f"{juego.pitcher_local.nombre} ({juego.pitcher_local.era})")
-        razon = (f"modelo propio: {salida} vale {prob:.0%} y el libro pide "
+        razon = (f"{fuente}: {salida} vale {prob:.0%} y el libro pide "
                  f"{ask:.0%} (ventaja {ventaja:+.0%}; pitagórica "
                  f"{fuerzas[local]:.3f} local vs {fuerzas[visitante]:.3f} "
                  f"visitante{pit})")
