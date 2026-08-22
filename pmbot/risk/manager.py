@@ -80,6 +80,10 @@ class PortfolioState:
     exposure_by_wallet: dict[str, float]
     exposure_by_strategy: dict[str, float]
     starting_equity: float = 0.0
+    # Qué outcome tenemos ya en cada mercado: {condition_id: {0, 1}}.
+    # Sirve para no comprar los dos lados del mismo partido ni recargar
+    # una posición persiguiendo el precio.
+    held_outcomes: dict[str, set[int]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,22 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                             f"${limits.min_order_usdc:.2f})")
     if cost > state.cash:
         return RiskDecision(False, f"cash insuficiente (${state.cash:.2f})")
+
+    # Un mercado, una posición. El arbitraje es la excepción: compra las dos
+    # patas a propósito y solo cuando la suma de precios es menor a 1.
+    if order.strategy != "arbitrage":
+        held = state.held_outcomes.get(order.condition_id) or set()
+        if held and order.outcome_index not in held:
+            # Comprar el lado contrario de algo que ya tenemos es pagar más
+            # de $1 por algo que paga $1: pierde gane quien gane.
+            return RiskDecision(
+                False, "ya tenemos el lado contrario de este mercado: "
+                       "comprar ambos lados garantiza pérdida")
+        if order.outcome_index in held:
+            # Recargar mientras el precio corre fue lo que convirtió pérdidas
+            # chicas en grandes (perseguir un partido en vivo).
+            return RiskDecision(
+                False, "ya tenemos posición en este mercado: no se recarga")
 
     if (state.day_start_equity > 0 and
             equity <= state.day_start_equity * (1 - limits.daily_stop_loss_pct)):

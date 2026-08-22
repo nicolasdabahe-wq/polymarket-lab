@@ -49,6 +49,10 @@ class CopyCandidate:
         return max(self.wallets, key=lambda w: w["score"])
 
 
+# Categorías donde "en vivo" existe y hace incopiable la señal.
+SPORT_CATEGORIES = {"sports", "esports", "games"}
+
+
 def market_not_started(market_row: sqlite3.Row,
                        buffer_minutes: float = 20.0) -> bool:
     """True si el evento todavía no empezó (con margen). Los mercados sin
@@ -208,6 +212,9 @@ class CopyTradingStrategy:
         # Piso por apuesta: por debajo de esto no vale la pena el riesgo
         # operativo (fees de red, spread, mínimos del exchange).
         self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
+        self.max_entry = float(cfg.get("max_entry_price", 0.80))
+        self.prematch_only_sports = bool(
+            cfg.get("sports_only_prematch", True))
 
     @property
     def blacklist(self) -> set[str]:
@@ -286,6 +293,20 @@ class CopyTradingStrategy:
         leader = cand.leader
         cur_price = self.broker.mark_price(
             cand.condition_id, cand.outcome_index, leader["price"])
+        # Techo de entrada: a 0.95 se arriesga todo para ganar 5 centavos por
+        # dólar. Hace falta acertar ~19 de cada 20 solo para empatar.
+        if cur_price > self.max_entry:
+            log.info("no copio '%s': entrada %.3f por encima del techo %.2f",
+                     cand.title[:40], cur_price, self.max_entry)
+            return None
+        # Deportes en vivo: la wallet entra con el partido corriendo y para
+        # cuando copiamos el precio ya se movió. El backtest lo dijo y el
+        # dinero real lo confirmó.
+        if (self.prematch_only_sports
+                and (market["category"] or "") in SPORT_CATEGORIES
+                and not market_not_started(market)):
+            log.info("no copio '%s': deporte ya empezado", cand.title[:40])
+            return None
         if not slippage_ok(leader["price"], cur_price, self.max_slippage):
             log.info("no copio '%s': precio ya movió %.3f→%.3f (>%.0f%%)",
                      cand.title[:40], leader["price"], cur_price,

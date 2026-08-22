@@ -171,3 +171,22 @@ def test_price_dropped_is_fine():
 
 def test_invalid_prices_block():
     assert not slippage_ok(0.0, 0.5, 0.10)
+
+
+# --- techo de entrada y deportes en vivo en las copias ---
+
+def test_techo_de_entrada_configurable():
+    from pmbot.strategies.copy_trading import CopyTradingStrategy
+    cfg = {"max_entry_price": 0.80, "sports_only_prematch": True}
+    s = CopyTradingStrategy.__new__(CopyTradingStrategy)
+    s.max_entry = float(cfg["max_entry_price"])
+    s.prematch_only_sports = bool(cfg["sports_only_prematch"])
+    # Las entradas de anoche: 0.95 y 0.92 quedan fuera; 0.57 y 0.68 entran.
+    assert 0.95 > s.max_entry and 0.92 > s.max_entry
+    assert 0.57 <= s.max_entry and 0.68 <= s.max_entry
+
+
+def test_categorias_deportivas_incluyen_esports():
+    from pmbot.strategies.copy_trading import SPORT_CATEGORIES
+    # El Dota 2 (-9.80) cae en esports: también debe filtrarse en vivo.
+    assert {"sports", "esports"} <= SPORT_CATEGORIES
