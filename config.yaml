@@ -140,9 +140,13 @@ strategies:
   copy_trading:
     enabled: true
     budget_pct: 0.50
-    # Con muchas wallets habilitadas conviene tamaño menor por copia: así
-    # entran más apuestas simultáneas antes de topar la exposición máxima.
-    base_pct_per_trade: 0.05
+    # El tamaño ya NO es fijo: escala con la ventaja estimada (sizing.py).
+    # Kelly fraccionado sobre el retorno esperado, que sale del ROI que dio
+    # copiar a esa wallet en el backtest, ajustado por consenso y slippage.
+    kelly_fraction: 0.25        # 25% de Kelly: nuestras probabilidades son ruidosas
+    max_trade_pct: 0.12         # techo por apuesta (~$29 con $240)
+    default_roi_untested: 0.05  # wallets sin backtest: ventaja conservadora
+    consensus_boost: 0.4        # cada wallet extra que coincide suma 40%
     min_trade_usdc: 12.0      # piso por copia
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     # Techo de entrada. Comprar a 0.95 es arriesgar $13 para ganar $0.60:
@@ -178,7 +182,7 @@ strategies:
       categories: [politics, economy, geopolitics, crypto, sports]
       # Deportes SOLO antes del inicio del partido (en vivo es incopiable).
       sports_only_prematch: true
-      max_entry_price: 0.90
+      max_entry_price: 0.80
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
   # Valor en cripto: modelo de opciones (precio spot + volatilidad real de

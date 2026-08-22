@@ -32,6 +32,7 @@ from typing import Any
 from ..db import from_json, to_json
 from ..execution import PaperBroker
 from ..risk import OrderRequest
+from .sizing import kelly_usdc, retorno_esperado
 
 log = logging.getLogger("pmbot.strategies.copy")
 
@@ -213,6 +214,11 @@ class CopyTradingStrategy:
         # operativo (fees de red, spread, mínimos del exchange).
         self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
         self.max_entry = float(cfg.get("max_entry_price", 0.80))
+        # Dimensionamiento por ventaja (ver sizing.py).
+        self.kelly_fraction = float(cfg.get("kelly_fraction", 0.25))
+        self.max_trade_pct = float(cfg.get("max_trade_pct", 0.12))
+        self.default_roi = float(cfg.get("default_roi_untested", 0.05))
+        self.consensus_boost = float(cfg.get("consensus_boost", 0.4))
         self.prematch_only_sports = bool(
             cfg.get("sports_only_prematch", True))
 
@@ -246,6 +252,29 @@ class CopyTradingStrategy:
                 continue
             out[w] = min(0.50 + max(r["roi"] or 0.0, 0.0), 0.95)
         return out
+
+    def _wallet_rois(self) -> dict[str, float]:
+        """ROI por operación que dio copiar a cada wallet en el backtest.
+        Es la evidencia con la que se dimensiona: sin backtest se usa un
+        valor conservador de config."""
+        return {r["wallet"]: (r["roi"] or 0.0) for r in self.conn.execute(
+            "SELECT wallet, roi FROM wallet_backtest WHERE verdict = 'copiable'")}
+
+    def _size_usdc(self, wallets: list[str], entry_price: float,
+                   cur_price: float, price_pagado: float) -> float:
+        """USDC a apostar según la ventaja estimada (Kelly fraccionado)."""
+        rois = self._wallet_rois()
+        mejor_roi = max((rois.get(w, self.default_roi) for w in wallets),
+                        default=self.default_roi)
+        # Cuánto del slippage tolerado ya se comió el precio.
+        movido = ((cur_price - entry_price) / entry_price
+                  if entry_price > 0 else 0.0)
+        usado = movido / self.max_slippage if self.max_slippage > 0 else 0.0
+        exp_r = retorno_esperado(mejor_roi, len(wallets), usado,
+                                 self.consensus_boost)
+        return kelly_usdc(self.broker.equity(), price_pagado, exp_r,
+                          self.kelly_fraction, self.min_trade_usdc,
+                          self.max_trade_pct)
 
     def _min_usdc_by_wallet(self) -> dict[str, float]:
         """Umbral de tamaño óptimo por wallet según su backtest."""
@@ -317,15 +346,18 @@ class CopyTradingStrategy:
         tokens = _json.loads(market["clob_token_ids"] or "[]")
         if cand.outcome_index >= len(tokens):
             return None
-        equity = self.broker.equity()
-        confidence = min(leader["score"], 1.0)
-        usdc_target = max(equity * self.base_pct * confidence,
-                          self.min_trade_usdc)
+        usdc_target = self._size_usdc(
+            [w["wallet"] for w in cand.wallets], leader["price"], cur_price,
+            cur_price)
+        if usdc_target <= 0:
+            log.info("no copio '%s': sin ventaja estimada", cand.title[:40])
+            return None
         size = usdc_target / max(cur_price, 0.01)
         names = ", ".join(w["wallet"][:8] for w in cand.wallets)
         reason = (f"copy: {len(cand.wallets)} wallet(s) top [{names}] "
                   f"compraron {cand.outcome} @ {leader['price']:.3f} "
-                  f"(score líder {leader['score']:.2f})")
+                  f"(score líder {leader['score']:.2f}; "
+                  f"apuesta ${usdc_target:.2f} por la ventaja estimada)")
         fill = await self.broker.execute(
             f"copy:{leader['wallet']}:{cand.condition_id}:{cand.outcome_index}",
             OrderRequest(
@@ -394,10 +426,10 @@ class CopyTradingStrategy:
             if idx >= len(tokens):
                 continue
             leader = max(cand["wallets"], key=lambda w: scores.get(w, 0))
-            equity = self.broker.equity()
-            confidence = min(scores.get(leader, 0.5), 1.0)
-            usdc_target = max(equity * self.base_pct * confidence,
-                              self.min_trade_usdc)
+            usdc_target = self._size_usdc(
+                list(cand["wallets"]), cand["avg_entry"], cur_price, cur_price)
+            if usdc_target <= 0:
+                continue
             size = usdc_target / max(cur_price, 0.01)
             names = ", ".join(w[:8] for w in cand["wallets"])
             reason = (f"consenso de posiciones: {len(cand['wallets'])} wallets "
