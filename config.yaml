@@ -53,16 +53,23 @@ smart_money:
     # sainttroplay mostraba +77.5% con SEIS copias y rn1 +23.8% con UNA.
     # Con 20, solo hablan las wallets que de verdad demostraron algo.
     min_copies: 20
-    max_wallets_per_run: 40
+    # Cuántas backtestear por corrida. La cola rota: primero las que nunca
+    # tuvieron veredicto (por actividad), después las más viejas de revisar,
+    # así el universo entero se cubre con el tiempo.
+    max_wallets_per_run: 60
     revalidate_hours: 24
-    # Descubrimiento: wallets con posiciones grandes en los mercados más
-    # activos. El leaderboard es histórico (muchas estrellas ya no operan);
-    # los holders de mercados calientes son quienes juegan AHORA.
+    # Descubrimiento. Tres fuentes que solo APORTAN nombres, ninguna
+    # descarta: el veredicto siempre lo da el backtest.
     discovery:
       enabled: true
-      markets: 15             # mercados top de los que mirar holders
-      holders_per_market: 10
-      max_candidates: 25      # candidatas nuevas por corrida
+      markets: 25             # mercados top de los que mirar holders
+      holders_per_market: 15
+      max_candidates: 60      # candidatas nuevas por corrida
+      # Universo de la cinta: toda wallet que se vea operando por encima de
+      # este monto entra a la cola de evaluación, tenga o no historial
+      # visible. El leaderboard muestra a los famosos; esto muestra a quien
+      # está moviendo dinero ahora.
+      candidate_min_usdc: 500
 
 intel:
   # Feeds RSS a vigilar. category debe coincidir con las categorías de mercados.

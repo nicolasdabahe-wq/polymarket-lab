@@ -201,6 +201,16 @@ def cmd_wallets(app: App) -> None:
     ).fetchone()["c"]
     print(f"Rechazadas por no ser rentables o consistentes: {rech}")
     print(f"Sin muestra suficiente para opinar: {sin}")
+    universo = app.conn.execute(
+        "SELECT COUNT(*) c FROM wallet_candidates").fetchone()["c"]
+    rank = app.conn.execute(
+        "SELECT COUNT(*) c FROM wallet_ranking").fetchone()["c"]
+    testeadas = rech + sin + len(rows)
+    print(f"\nUniverso conocido: {universo} wallets vistas operando en grande "
+          f"+ {rank} del leaderboard.")
+    print(f"Con backtest corrido: {testeadas}. El resto entra en las "
+          f"próximas corridas (la cola prioriza a las que no tienen "
+          f"veredicto).")
 
 
 async def cmd_validate_wallets(app: App, force: bool = False) -> None:

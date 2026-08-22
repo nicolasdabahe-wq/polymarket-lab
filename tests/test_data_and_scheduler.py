@@ -106,3 +106,60 @@ def test_tape_calcula_el_usdc_del_trade(tmp_path):
     tape = TradeTape(connect(tmp_path / "t2.db"), FakeHttp(), min_usdc=150)
     [t] = asyncio.run(tape.fetch())
     assert t.usdc == 160.0 and t.wallet == "0xaaa"
+
+
+def test_tape_registra_el_universo_de_candidatas(tmp_path):
+    """Toda wallet que opere en grande entra a la cola de evaluación, sea
+    conocida o no. Filtrar acá sería descartar sin mirar números."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.tape import TradeTape
+
+    crudo = [
+        {"proxyWallet": "0xBALLENA", "side": "BUY", "conditionId": "0xm1",
+         "title": "T", "outcome": "Yes", "outcomeIndex": 0,
+         "size": "4000", "price": "0.50", "timestamp": 100},   # $2000
+        {"proxyWallet": "0xCHICA", "side": "BUY", "conditionId": "0xm2",
+         "title": "T", "outcome": "Yes", "outcomeIndex": 0,
+         "size": "200", "price": "0.50", "timestamp": 101},    # $100
+        {"proxyWallet": "0xBALLENA", "side": "SELL", "conditionId": "0xm3",
+         "title": "T", "outcome": "No", "outcomeIndex": 1,
+         "size": "2000", "price": "0.60", "timestamp": 102},   # $1200
+    ]
+
+    class FakeHttp:
+        async def get_json(self, url, params=None):
+            return crudo
+
+    conn = connect(tmp_path / "u.db")
+    tape = TradeTape(conn, FakeHttp(), min_usdc=150, candidate_min_usdc=500)
+    trades = asyncio.run(tape.fetch())
+    tape.registrar_candidatas(trades, 500)
+
+    filas = {r["wallet"]: r for r in conn.execute(
+        "SELECT * FROM wallet_candidates")}
+    assert set(filas) == {"0xballena"}          # la de $100 no llega al corte
+    assert filas["0xballena"]["trades_grandes"] == 2   # compra y venta cuentan
+    assert filas["0xballena"]["max_usdc"] == 2000.0
+    assert filas["0xballena"]["fuente"] == "cinta"
+
+
+def test_tape_acumula_apariciones_entre_corridas(tmp_path):
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.smart_money.tape import TradeTape
+
+    class FakeHttp:
+        async def get_json(self, url, params=None):
+            return [{"proxyWallet": "0xW", "side": "BUY", "conditionId": "0xm",
+                     "title": "T", "outcome": "Yes", "outcomeIndex": 0,
+                     "size": "2000", "price": "0.50", "timestamp": 1}]
+
+    conn = connect(tmp_path / "u2.db")
+    tape = TradeTape(conn, FakeHttp(), min_usdc=150, candidate_min_usdc=500)
+    for _ in range(3):
+        tape.registrar_candidatas(asyncio.run(tape.fetch()), 500)
+    fila = conn.execute("SELECT * FROM wallet_candidates").fetchone()
+    assert fila["trades_grandes"] == 3

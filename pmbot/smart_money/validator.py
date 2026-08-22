@@ -19,6 +19,7 @@ from typing import Any
 
 from ..backtest import CopyBacktester
 from .behavior import perfil_operador
+from .cola import Candidata, ordenar_cola
 from .seleccion import Opcion, elegir_umbral
 
 log = logging.getLogger("pmbot.smart_money.validator")
@@ -45,6 +46,48 @@ class WalletValidator:
         self.discover_markets = int(dcfg.get("markets", 15))
         self.discover_per_market = int(dcfg.get("holders_per_market", 10))
         self.discover_max = int(dcfg.get("max_candidates", 25))
+
+    async def _universo(self) -> list[Candidata]:
+        """Todas las wallets que conocemos, de todas las fuentes.
+
+        El leaderboard trae a los acumulados históricos; la cinta trae a
+        quien mueve dinero AHORA aunque no tenga historial visible; los
+        holders traen a quien está posicionado en los mercados calientes.
+        Ninguna fuente filtra: solo aportan nombres.
+        """
+        testeadas = {r["wallet"]: r["tested_at"] for r in self.conn.execute(
+            "SELECT wallet, tested_at FROM wallet_backtest")}
+        fuera: list[Candidata] = []
+
+        def agregar(wallet: str, fuente: str, username: str = "",
+                    actividad: int = 0) -> None:
+            if not wallet:
+                return
+            fuera.append(Candidata(wallet=wallet.lower(), username=username,
+                                   testeada_en=testeadas.get(wallet.lower()),
+                                   actividad=actividad, fuentes={fuente}))
+
+        # 1. El ranking COMPLETO, no solo el que pasa los filtros duros:
+        #    esos filtros (antigüedad, nº de trades) descartaban wallets sin
+        #    mirarles un solo número. Quien decide es el backtest.
+        for r in self.conn.execute(
+                "SELECT wallet, username, score FROM wallet_ranking"):
+            agregar(r["wallet"], "leaderboard", r["username"] or "")
+        # 2. Las que ya tienen veredicto, para revalidarlas cuando toque.
+        for r in self.conn.execute("SELECT wallet FROM wallet_backtest"):
+            agregar(r["wallet"], "backtest")
+        # 3. El universo de la cinta: todo el que opera en grande.
+        for r in self.conn.execute(
+                """SELECT wallet, trades_grandes FROM wallet_candidates
+                   ORDER BY trades_grandes DESC LIMIT 500"""):
+            agregar(r["wallet"], "cinta", actividad=r["trades_grandes"] or 0)
+        # 4. Holders de los mercados más activos.
+        try:
+            for wallet in await self.discover_candidates():
+                agregar(wallet, "holders")
+        except Exception as exc:
+            log.warning("descubrimiento por holders falló: %s", exc)
+        return fuera
 
     def _needs_test(self, wallet: str) -> bool:
         row = self.conn.execute(
@@ -99,36 +142,19 @@ class WalletValidator:
         operador) sin esperar 24 horas."""
         if not self.enabled:
             return []
-        rows = self.conn.execute(
-            """SELECT wallet, username FROM wallet_ranking
-               WHERE passed_filters = 1 ORDER BY score DESC LIMIT ?""",
-            (self.max_wallets,)).fetchall()
-        pending = [(r["wallet"], r["username"]) for r in rows
-                   if force or self._needs_test(r["wallet"])]
-        # Las que ya están habilitadas pero NO salen del leaderboard (las
-        # descubiertas en mercados calientes) también hay que reevaluarlas:
-        # si no, conservan para siempre el veredicto con el criterio viejo.
-        # Así fue como una wallet que hace mercado siguió en el carril
-        # rápido después de agregar el perfil de operador (2026-08-22).
-        for r in self.conn.execute(
-                "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'"):
-            if force or self._needs_test(r["wallet"]):
-                pending.append((r["wallet"], ""))
-        # Sumar candidatas activas descubiertas en los mercados calientes.
-        try:
-            for wallet in await self.discover_candidates():
-                pending.append((wallet, ""))
-        except Exception as exc:
-            log.warning("descubrimiento de wallets falló: %s", exc)
-        # Una sola vez cada una, conservando el nombre si lo tenemos.
-        vistas: dict[str, str] = {}
-        for wallet, username in pending:
-            if wallet not in vistas or (username and not vistas[wallet]):
-                vistas[wallet] = username
-        pending = list(vistas.items())
+        candidatas = await self._universo()
+        # A nadie se lo saca de la cola por su forma de operar, su
+        # antigüedad ni su cantidad de trades: lo único que descarta a una
+        # wallet son sus números, y para eso hay que correrle el backtest.
+        cola = ordenar_cola(
+            [c for c in candidatas
+             if force or self._needs_test(c.wallet)], self.max_wallets)
+        pending = [(c.wallet, c.username) for c in cola]
         if not pending:
             return []
-        log.info("validando %d wallets por backtest", len(pending))
+        sin_veredicto = sum(1 for c in cola if c.testeada_en is None)
+        log.info("validando %d de %d candidatas (%d sin veredicto previo)",
+                 len(pending), len(candidatas), sin_veredicto)
 
         results: list[dict[str, Any]] = []
         for wallet, username in pending:

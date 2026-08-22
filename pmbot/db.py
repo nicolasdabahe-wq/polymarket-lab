@@ -49,6 +49,20 @@ CREATE TABLE IF NOT EXISTS wallet_ranking (
     ranked_at     TEXT NOT NULL
 );
 
+-- Universo de candidatas: toda wallet que aparezca operando en grande en
+-- la cinta global. El leaderboard muestra a los famosos; esto muestra a
+-- quien está moviendo dinero AHORA, tenga o no historial visible.
+CREATE TABLE IF NOT EXISTS wallet_candidates (
+    wallet         TEXT PRIMARY KEY,
+    fuente         TEXT,                        -- cinta | holders | leaderboard
+    trades_grandes INTEGER NOT NULL DEFAULT 0,
+    max_usdc       REAL,
+    primera_vez    TEXT,
+    ultima_vez     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cand_actividad
+    ON wallet_candidates(trades_grandes DESC);
+
 CREATE TABLE IF NOT EXISTS wallet_positions (
     wallet       TEXT NOT NULL,
     condition_id TEXT NOT NULL,

@@ -236,8 +236,12 @@ class CopyTradingStrategy:
             "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'")}
         trust_score = float(self.cfg.get("trust_without_backtest", 0.60))
         out: dict[str, float] = {}
+        # Sin filtrar por passed_filters: los filtros duros del ranking
+        # (antigüedad, nº de trades) descartaban wallets sin mirarles un
+        # número. Acá el veredicto del backtest ya mandó; el score solo
+        # habilita a las que todavía no tienen veredicto.
         for r in self.conn.execute(
-                "SELECT wallet, score FROM wallet_ranking WHERE passed_filters = 1"):
+                "SELECT wallet, score FROM wallet_ranking"):
             w, score = r["wallet"], r["score"]
             if w in self.blacklist or w in rejected:
                 continue

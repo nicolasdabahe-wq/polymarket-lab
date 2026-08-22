@@ -78,9 +78,13 @@ def build_app(cfg: Config) -> App:
         market_store=MarketStore(conn),
         wallet_scorer=WalletScorer(data_api, conn, cfg.section("smart_money")),
         wallet_tracker=WalletTracker(data_api, conn, cfg.section("smart_money")),
-        tape=TradeTape(conn, http, min_usdc=float(
-            (cfg.section("strategies").get("copy_trading") or {})
-            .get("min_copy_usdc_of_wallet", 150))),
+        tape=TradeTape(
+            conn, http,
+            min_usdc=float((cfg.section("strategies").get("copy_trading") or {})
+                           .get("min_copy_usdc_of_wallet", 150)),
+            candidate_min_usdc=float(
+                ((cfg.section("smart_money").get("validation") or {})
+                 .get("discovery") or {}).get("candidate_min_usdc", 500))),
         wallet_validator=WalletValidator(
             conn, CopyBacktester(data_api, GammaClient(http)),
             cfg.section("smart_money"), api=data_api),

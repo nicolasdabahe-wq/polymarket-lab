@@ -47,10 +47,14 @@ class TapeTrade:
 
 class TradeTape:
     def __init__(self, conn: sqlite3.Connection, http: HttpClient,
-                 min_usdc: float = 150.0) -> None:
+                 min_usdc: float = 150.0,
+                 candidate_min_usdc: float = 500.0) -> None:
         self.conn = conn
         self.http = http
         self.min_usdc = min_usdc
+        # Tamaño a partir del cual una wallet desconocida merece que se le
+        # mire el historial. Más bajo = universo más grande y más backtests.
+        self.candidate_min_usdc = candidate_min_usdc
 
     async def fetch(self, limit: int = PAGE) -> list[TapeTrade]:
         """Últimos trades del sitio por encima del filtro de tamaño."""
@@ -75,6 +79,34 @@ class TradeTape:
                 continue
         return out
 
+    def registrar_candidatas(self, trades: list[TapeTrade],
+                             min_usdc: float) -> int:
+        """Toda wallet que opere en grande entra al universo de candidatas.
+
+        El leaderboard solo muestra a los acumulados históricos; la cinta
+        ve a TODO el que mueve dinero ahora mismo, tenga o no historial
+        visible. Después el backtest decide quién sirve: acá no se filtra
+        a nadie, solo se anota que existe.
+        """
+        ahora = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        nuevas = 0
+        with self.conn:
+            for t in trades:
+                if t.usdc < min_usdc or not t.wallet:
+                    continue
+                cur = self.conn.execute(
+                    """INSERT INTO wallet_candidates
+                       (wallet, fuente, trades_grandes, max_usdc,
+                        primera_vez, ultima_vez)
+                       VALUES (?, 'cinta', 1, ?, ?, ?)
+                       ON CONFLICT(wallet) DO UPDATE SET
+                         trades_grandes = trades_grandes + 1,
+                         max_usdc = MAX(COALESCE(max_usdc, 0), excluded.max_usdc),
+                         ultima_vez = excluded.ultima_vez""",
+                    (t.wallet, t.usdc, ahora, ahora))
+                nuevas += 1 if cur.rowcount and cur.lastrowid else 0
+        return nuevas
+
     def _watermark(self) -> int:
         row = self.conn.execute(
             "SELECT value FROM paper_state WHERE key = 'tape_watermark'"
@@ -96,6 +128,9 @@ class TradeTape:
         trades = await self.fetch()
         if not trades:
             return []
+        # Antes de filtrar por wallets vigiladas: anotar a TODO el que opere
+        # en grande. Ese es el universo del que salen las candidatas nuevas.
+        self.registrar_candidatas(trades, self.candidate_min_usdc)
         watermark = self._watermark()
         latest = max(t.timestamp for t in trades)
         self._save_watermark(latest)
