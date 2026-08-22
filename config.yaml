@@ -148,10 +148,9 @@ strategies:
     # Techo de entrada. Comprar a 0.95 es arriesgar $13 para ganar $0.60:
     # hay que acertar 19 de 20 solo para empatar. Con la primera noche real
     # (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando ganaban y
-    # -13 cuando perdían. A 0.85 se arriesga $13 para ganar $2.30, que ya
-    # es una apuesta de verdad; ahí entraron las que sí ganaron (Gauff,
-    # Blue Jays, Cardinals).
-    max_entry_price: 0.85
+    # -13 cuando perdían. A 0.75 se arriesga $12 para ganar $4: pide acertar
+    # 3 de cada 4 y paga en consecuencia. Número elegido por el dueño.
+    max_entry_price: 0.75
     # El en vivo SÍ se copia: decisión del dueño (2026-08-22). Lo que hacía
     # daño no era el en vivo sino el precio al que entraba. El techo de
     # arriba y el tope de slippage son los que cuidan la entrada.

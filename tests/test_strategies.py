@@ -180,7 +180,8 @@ def test_techo_de_entrada_deja_fuera_las_apuestas_de_centavos():
     cfg = load_config("config.yaml").section(
         "strategies")["copy_trading"]
     techo = float(cfg["max_entry_price"])
-    # Entradas reales del 2026-08-22: las de +0.50/+0.60 quedan fuera,
-    # las que dieron +3.33 y +5.26 siguen entrando.
+    # Entradas reales del 2026-08-22: las que ganaban centavos quedan fuera
+    # (0.92 y 0.95 daban +0.50/+0.60) y la mejor del día sigue entrando
+    # (Blue Jays a 0.68 dio +5.72).
     assert 0.95 > techo and 0.92 > techo
-    assert 0.79 <= techo and 0.85 <= techo and 0.68 <= techo
+    assert 0.68 <= techo
