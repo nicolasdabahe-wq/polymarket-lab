@@ -176,6 +176,7 @@ class DailyRoutine:
         moves["consenso"] = await self.app.copy_trading.check_holdings_consensus()
         moves["arbitrajes"] = await self.app.arbitrage.scan_and_execute()
         moves["valor_cripto"] = await self.app.crypto_value.scan_and_execute()
+        moves["valor_deportes"] = await self.app.sports_value.scan_and_execute()
         self.app.broker.snapshot_equity()
         return moves
 
@@ -404,6 +405,22 @@ class DailyRoutine:
             await self.app.notifier.send(
                 "🤝 Consenso de posiciones:\n" + "\n".join(f"• {d}" for d in entries))
 
+    async def poll_sports(self) -> None:
+        """Nuestro modelo propio contra el precio del mercado. Corre cada
+        pocos minutos: los mercados de béisbol abren con horas de
+        anticipación y las líneas tardan en ajustarse."""
+        try:
+            hechas = await self.app.sports_value.scan_and_execute()
+        except Exception:
+            log.exception("valor deportivo falló; sigo")
+            return
+        for d in hechas:
+            log.info("VALOR DEPORTIVO: %s", d)
+        if hechas:
+            await self.app.notifier.send(
+                "⚾ Apuesta por modelo propio:\n"
+                + "\n".join(f"• {d}" for d in hechas))
+
     async def poll_arbitrage(self) -> None:
         executed = await self.app.arbitrage.scan_and_execute()
         for desc in executed:
@@ -427,6 +444,7 @@ async def run_forever(app: App) -> None:
     sm_every = timedelta(minutes=float(sched.get("smart_money_poll_minutes", 15)))
     tape_every = timedelta(seconds=float(sched.get("tape_poll_seconds", 60)))
     fast_every = timedelta(seconds=float(sched.get("fast_lane_seconds", 15)))
+    sports_every = timedelta(minutes=float(sched.get("sports_poll_minutes", 20)))
     markets_every = timedelta(minutes=float(sched.get("markets_refresh_minutes", 30)))
     consensus_every = timedelta(
         minutes=float(sched.get("holdings_consensus_minutes", 30)))
@@ -439,6 +457,7 @@ async def run_forever(app: App) -> None:
     next_sm = now
     next_tape = now
     next_fast = now
+    next_sports = now
     next_markets = now
     next_consensus = now
     next_reconcile = now
@@ -467,6 +486,9 @@ async def run_forever(app: App) -> None:
                 next_markets = now + markets_every
                 await routine.refresh_markets()
                 await routine.poll_arbitrage()
+            if now >= next_sports:
+                next_sports = now + sports_every
+                await routine.poll_sports()
             if now >= next_intel:
                 next_intel = now + intel_every
                 await routine.poll_intel()
@@ -489,7 +511,8 @@ async def run_forever(app: App) -> None:
             # Ningún fallo transitorio debe tumbar el loop 24/7.
             log.exception("error en el ciclo del scheduler; sigo")
         wake = min(next_daily, next_intel, next_sm, next_markets,
-                   next_consensus, next_reconcile, next_tape, next_fast)
+                   next_consensus, next_reconcile, next_tape, next_fast,
+                   next_sports)
         # Mínimo 1s: con la cinta cada 10s el loop no puede dormirse de más.
         await asyncio.sleep(
             max((wake - datetime.now(timezone.utc)).total_seconds(), 1.0))

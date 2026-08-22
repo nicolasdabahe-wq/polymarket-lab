@@ -14,10 +14,11 @@ from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
 from .risk import RiskManager
 from .backtest import CopyBacktester
+from .data.sports import MlbClient
 from .smart_money.tape import TradeTape
 from .smart_money import WalletScorer, WalletTracker, WalletValidator
 from .strategies import (ArbitrageStrategy, CopyTradingStrategy,
-                         CryptoValueStrategy)
+                         CryptoValueStrategy, SportsValueStrategy)
 
 
 @dataclass
@@ -42,6 +43,7 @@ class App:
     arbitrage: ArbitrageStrategy
     copy_trading: CopyTradingStrategy
     crypto_value: CryptoValueStrategy
+    sports_value: Any
 
     async def aclose(self) -> None:
         await self.http.aclose()
@@ -103,4 +105,7 @@ def build_app(cfg: Config) -> App:
             gamma=GammaClient(http), market_store=MarketStore(conn)),
         crypto_value=CryptoValueStrategy(conn, PriceFeed(http), broker,
                                          strategies_cfg.get("crypto_value") or {}),
+        sports_value=SportsValueStrategy(
+            conn, MlbClient(http), gamma, broker,
+            strategies_cfg.get("sports_value") or {}, MarketStore(conn)),
     )

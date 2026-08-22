@@ -121,6 +121,8 @@ scheduler:
   # 10 min es el óptimo: las carteras cambian lento y más frecuencia solo
   # provoca rate-limits (429) que frenan TODOS los polls con reintentos.
   holdings_consensus_minutes: 10
+  # Modelo deportivo propio contra el precio del mercado.
+  sports_poll_minutes: 20
   # Reconciliación con la blockchain (adopta fills tardíos) y liquidación
   # de mercados resueltos.
   reconcile_minutes: 5
@@ -210,6 +212,29 @@ strategies:
       max_entry_price: 0.80
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
+  # Valor en deportes: NUESTRO propio modelo contra el precio del mercado.
+  # No intenta adivinar mejor que las casas de apuestas (imposible), sino
+  # detectar cuándo Polymarket se aleja mucho de un número razonable: juegos
+  # de poco volumen, líneas recién abiertas, mercados que nadie mira.
+  # Insumos, todos de la API oficial y gratis de la MLB:
+  #   · expectativa pitagórica (carreras a favor/en contra, mejor que el récord)
+  #   · fórmula Log5 para el enfrentamiento
+  #   · ERA del abridor probable contra el promedio de la liga
+  #   · ventaja de local
+  sports_value:
+    enabled: true
+    budget_pct: 0.25
+    min_edge: 0.08          # el modelo debe discrepar >= 8 puntos del libro
+    max_entry_price: 0.75
+    min_trade_usdc: 12.0
+    kelly_fraction: 0.25
+    max_trade_pct: 0.12
+    # El abridor se cuenta a media fuerza: la pitagórica del equipo ya lo
+    # incluye en su temporada, contarlo entero sería contarlo dos veces.
+    peso_pitcher: 0.5
+    ventaja_local: 0.035    # el local en MLB gana ~54% de los juegos
+    # Solo antes del primer lanzamiento: el modelo no sabe el marcador.
+    min_minutos_antes: 15
   # Valor en cripto: modelo de opciones (precio spot + volatilidad real de
   # Coinbase) vs la probabilidad implícita del mercado de Polymarket.
   crypto_value:

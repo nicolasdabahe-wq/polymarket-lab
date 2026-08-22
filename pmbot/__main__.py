@@ -17,6 +17,7 @@
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
   python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
+  python -m pmbot mlb                # qué opina nuestro modelo de béisbol vs el mercado
   python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
@@ -165,6 +166,70 @@ async def cmd_portfolio(app: App) -> None:
         print(f"\nTuyo, fuera del bot: ${external:.2f} — posiciones que "
               f"abriste vos y premios ganados sin cobrar.\n"
               f"  El bot las cuenta en el equity pero no las toca.")
+
+
+async def cmd_mlb(app: App) -> None:
+    """Qué opina nuestro modelo de béisbol y dónde discrepa del mercado.
+
+    No opera: sirve para auditar el modelo antes y después de que apueste.
+    """
+    import json as _json
+    from datetime import datetime, timedelta, timezone
+
+    from .strategies.sports_value import (ajuste_pitcher, apodo, leer_pregunta,
+                                          pitagorica, prob_local)
+
+    s = app.sports_value
+    mercados = await app.gamma.fetch_by_tag("baseball", limit=200)
+    if mercados:
+        app.market_store.upsert_markets(mercados)
+    ahora = datetime.now(timezone.utc)
+    fuerzas = await s._fuerzas()
+    juegos = []
+    for delta in (0, 1):
+        juegos.extend(await app.sports_value.mlb.juegos(
+            (ahora + timedelta(days=delta)).date().isoformat()))
+    print(f"\n⚾ {len(juegos)} juegos de MLB en las próximas 48h\n")
+    print(f"{'juego':36} {'falta':>7} {'modelo':>8} {'libro':>7} {'ventaja':>8}  abridores")
+    apuestas = 0
+    for g in juegos:
+        av, lo = apodo(g.visitante), apodo(g.local)
+        if av not in fuerzas or lo not in fuerzas:
+            continue
+        aj_l = (ajuste_pitcher(g.pitcher_local.era, g.pitcher_local.entradas,
+                               s.peso_pitcher) if g.pitcher_local else 0.0)
+        aj_v = (ajuste_pitcher(g.pitcher_visitante.era,
+                               g.pitcher_visitante.entradas,
+                               s.peso_pitcher) if g.pitcher_visitante else 0.0)
+        p = prob_local(fuerzas[lo], fuerzas[av], aj_l, aj_v, s.ventaja_local)
+        try:
+            inicio = datetime.fromisoformat(g.inicio_utc.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        horas = (inicio - ahora).total_seconds() / 3600
+        fila = s._buscar_mercado(av, lo, inicio)
+        if not fila:
+            continue
+        crudo = _json.loads(fila["raw"] or "{}") or {}
+        salidas = _json.loads(crudo.get("outcomes") or "[]")
+        i_local = next((i for i, o in enumerate(salidas) if apodo(o) == lo), None)
+        if i_local is None or fila["yes_price"] is None:
+            continue
+        libro = fila["yes_price"] if i_local == 0 else 1 - fila["yes_price"]
+        v = p - libro
+        marca = "  <<<" if abs(v) >= s.min_edge and horas > 0.25 else ""
+        apuestas += 1 if marca else 0
+        pits = ""
+        if g.pitcher_visitante and g.pitcher_local:
+            pits = (f"{g.pitcher_visitante.nombre.split()[-1][:9]}"
+                    f"({g.pitcher_visitante.era or '—'}) vs "
+                    f"{g.pitcher_local.nombre.split()[-1][:9]}"
+                    f"({g.pitcher_local.era or '—'})")
+        print(f"{g.visitante[:16]:17}@{g.local[:16]:18} {horas:6.1f}h {p:8.1%} "
+              f"{libro:7.1%} {v:+8.1%}{marca:6} {pits}")
+    print(f"\nDiscrepancias sobre el umbral de {s.min_edge:.0%}: {apuestas}")
+    print("El modelo usa carreras (pitagórica), Log5, ERA del abridor y "
+          "localía.\nSolo apuesta antes del primer lanzamiento.")
 
 
 def cmd_wallets(app: App) -> None:
@@ -439,6 +504,7 @@ def main() -> None:
                        help="reevaluar a todas, sin esperar la ventana de 24h")
     sub.add_parser("diagnose")
     sub.add_parser("wallets")
+    sub.add_parser("mlb")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -490,6 +556,8 @@ def main() -> None:
                 await cmd_validate_wallets(app, force=args.force)
             elif args.command == "wallets":
                 cmd_wallets(app)
+            elif args.command == "mlb":
+                await cmd_mlb(app)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":

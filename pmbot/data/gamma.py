@@ -132,6 +132,27 @@ class GammaClient:
         log.info("Gamma: %d mercados activos cacheados", len(result))
         return result
 
+    async def fetch_by_tag(self, tag_slug: str,
+                           limit: int = 200) -> list[Market]:
+        """Mercados de una categoría puntual (ej. 'baseball').
+
+        El cache diario guarda los de más volumen, y los juegos del día
+        suelen quedar fuera hasta que la gente empieza a apostar. Nuestro
+        modelo necesita justamente esos: los que nadie está mirando todavía.
+        """
+        try:
+            events = await self.http.get_json(
+                f"{GAMMA_BASE}/events",
+                params={"limit": limit, "active": "true", "closed": "false",
+                        "archived": "false", "tag_slug": tag_slug,
+                        "order": "volume24hr", "ascending": "false"})
+        except Exception as exc:
+            log.warning("Gamma por tag '%s' falló: %s", tag_slug, exc)
+            return []
+        salida = [m for m in self._flatten(events or []) if m.active]
+        log.debug("Gamma: %d mercados con tag '%s'", len(salida), tag_slug)
+        return salida
+
     async def fetch_market(self, condition_id: str) -> Market | None:
         """Trae un mercado puntual (para oportunidades fuera del top de
         volumen: las ballenas tienen posiciones grandes en mercados de
