@@ -214,11 +214,20 @@ class DailyRoutine:
             f"💰 Equity: ${state.equity:.2f} (cash ${state.cash:.2f} + "
             f"posiciones ${state.exposure_total:.2f}) | "
             f"PnL total {total_pnl:+.2f} ({total_pnl / starting:+.1%})")
-        pnl_by_strategy = self._pnl_by_strategy(state)
-        if pnl_by_strategy:
-            lines.append("PnL por estrategia: " + " | ".join(
-                f"{s}: realizado {r:+.2f}, no realizado {u:+.2f}"
-                for s, (r, u) in sorted(pnl_by_strategy.items())))
+        from ..monitor.performance import (formatear, nombre_wallet,
+                                           resumen_estrategias,
+                                           resumen_wallets)
+        posiciones = self.app.broker.positions()
+        marca = self.app.broker.mark_price
+        lines.append(formatear(
+            resumen_estrategias(conn, posiciones, marca),
+            "🧮 PnL por estrategia (desde el inicio):"))
+        top_wallets = resumen_wallets(conn, posiciones, marca)
+        if top_wallets:
+            lines.append("")
+            lines.append(formatear(
+                top_wallets[:6], "👛 PnL por wallet copiada:",
+                nombres=lambda w: nombre_wallet(conn, w)))
         lines.append("")
 
         lines.append("🔁 Movimientos de hoy:")
@@ -279,22 +288,6 @@ class DailyRoutine:
         if not briefings:
             lines.append("(sin noticias analizadas hoy)")
         return "\n".join(lines)
-
-    def _pnl_by_strategy(self, state) -> dict[str, tuple[float, float]]:
-        """{estrategia: (PnL realizado, PnL no realizado)}."""
-        out: dict[str, tuple[float, float]] = {}
-        for row in self.app.conn.execute(
-                """SELECT strategy, COALESCE(SUM(realized_pnl), 0) AS r
-                   FROM orders WHERE realized_pnl IS NOT NULL
-                   GROUP BY strategy"""):
-            out[row["strategy"]] = (row["r"], 0.0)
-        for p in self.app.broker.positions():
-            mark = self.app.broker.mark_price(
-                p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
-            unreal = p["size"] * (mark - p["avg_price"])
-            r, u = out.get(p["strategy"], (0.0, 0.0))
-            out[p["strategy"]] = (r, u + unreal)
-        return out
 
     def _write_report(self, report: str) -> Path:
         reports_dir = Path("reports")

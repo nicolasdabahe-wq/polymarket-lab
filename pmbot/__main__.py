@@ -19,6 +19,7 @@
   python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
   python -m pmbot mlb                # qué opina nuestro modelo de béisbol vs el mercado
   python -m pmbot capital [--vender] # cuánto capital está dormido (y liberarlo)
+  python -m pmbot rendimiento [--dias N]  # quién hizo el dinero: por estrategia y wallet
   python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
@@ -167,6 +168,30 @@ async def cmd_portfolio(app: App) -> None:
         print(f"\nTuyo, fuera del bot: ${external:.2f} — posiciones que "
               f"abriste vos y premios ganados sin cobrar.\n"
               f"  El bot las cuenta en el equity pero no las toca.")
+
+
+def cmd_rendimiento(app: App, dias: int | None = None) -> None:
+    """¿Quién me hizo el dinero? PnL por estrategia y por wallet copiada."""
+    from datetime import datetime, timedelta, timezone
+
+    from .monitor.performance import (formatear, nombre_wallet,
+                                      resumen_estrategias, resumen_wallets)
+
+    desde = None
+    if dias is not None:
+        desde = (datetime.now(timezone.utc) - timedelta(days=dias)
+                 ).date().isoformat()
+    posiciones = app.broker.positions()
+    marca = app.broker.mark_price
+    periodo = f"últimos {dias} días" if dias else "desde el inicio"
+    print()
+    print(formatear(resumen_estrategias(app.conn, posiciones, marca, desde),
+                    f"🧮 PnL por estrategia ({periodo}):"))
+    print()
+    print(formatear(resumen_wallets(app.conn, posiciones, marca, desde),
+                    f"👛 PnL por wallet copiada ({periodo}):",
+                    nombres=lambda w: nombre_wallet(app.conn, w)))
+    print("\n(real = cerrado y cobrado; flot = posiciones aún abiertas)")
 
 
 async def cmd_capital(app: App, vender: bool = False,
@@ -590,6 +615,9 @@ def main() -> None:
     sub.add_parser("diagnose")
     sub.add_parser("wallets")
     sub.add_parser("mlb")
+    p_rend = sub.add_parser("rendimiento")
+    p_rend.add_argument("--dias", type=int, default=None,
+                        help="limitar a los últimos N días")
     p_cap = sub.add_parser("capital")
     p_cap.add_argument("--vender", action="store_true",
                        help="liberar las posiciones que superan el corte")
@@ -649,6 +677,8 @@ def main() -> None:
                 cmd_wallets(app)
             elif args.command == "mlb":
                 await cmd_mlb(app)
+            elif args.command == "rendimiento":
+                cmd_rendimiento(app, dias=args.dias)
             elif args.command == "capital":
                 await cmd_capital(app, vender=args.vender,
                                   dias_min=args.dias)
