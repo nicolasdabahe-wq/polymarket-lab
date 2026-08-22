@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..data.clob import BookLevel, ClobClient
@@ -117,6 +117,18 @@ class PaperBroker:
         yes = float(row["yes_price"])
         return yes if outcome_index == 0 else 1.0 - yes
 
+    def _condiciones_lentas(self) -> set[str]:
+        """Mercados de las posiciones abiertas que tardan en resolverse.
+
+        La fecha sale del cache de mercados; si no la conocemos, se asume
+        rápida (no bloquear por ignorancia).
+        """
+        umbral = getattr(self.risk.limits, "slow_days", 10.0)
+        corte = (datetime.now(timezone.utc) + timedelta(days=umbral)).isoformat()
+        return {r["condition_id"] for r in self.conn.execute(
+            """SELECT condition_id FROM markets
+               WHERE end_date IS NOT NULL AND end_date > ?""", (corte,))}
+
     def positions_value(self) -> float:
         """Valor de mercado de las posiciones propias (sin tocar el estado
         completo: lo usa starting_capital, que portfolio_state consulta)."""
@@ -140,11 +152,15 @@ class PaperBroker:
         by_wallet: dict[str, float] = {}
         by_strategy: dict[str, float] = {}
         held: dict[str, dict[int, float]] = {}
+        lentas = self._condiciones_lentas()
+        exposure_slow = 0.0
         positions_value = 0.0
         for p in self.positions():
             value = p["size"] * self.mark_price(
                 p["condition_id"], p["outcome_index"] or 0, p["avg_price"])
             positions_value += value
+            if p["condition_id"] in lentas:
+                exposure_slow += value
             held.setdefault(p["condition_id"], {})[p["outcome_index"] or 0] = \
                 float(p["avg_price"])
             by_market[p["condition_id"]] = by_market.get(p["condition_id"], 0) + value
@@ -163,7 +179,7 @@ class PaperBroker:
             exposure_total=positions_value,
             exposure_by_market=by_market, exposure_by_category=by_category,
             exposure_by_wallet=by_wallet, exposure_by_strategy=by_strategy,
-            held_outcomes=held,
+            held_outcomes=held, exposure_slow=exposure_slow,
         )
 
     def equity(self) -> float:

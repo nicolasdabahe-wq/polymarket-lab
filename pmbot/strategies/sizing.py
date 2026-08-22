@@ -58,3 +58,21 @@ def kelly_usdc(equity: float, price: float, exp_return: float,
         return 0.0
     usdc = equity * fraction * kelly
     return min(max(usdc, min_usdc), equity * max_pct)
+
+
+def dias_hasta(fecha_iso: str | None) -> float | None:
+    """Días que faltan para una fecha ISO. None si no se sabe.
+
+    Lo usan las estrategias para avisarle a risk/ cuánto tiempo quedaría
+    inmovilizado el dinero de una apuesta.
+    """
+    if not fecha_iso:
+        return None
+    from datetime import datetime, timezone
+    try:
+        fin = datetime.fromisoformat(str(fecha_iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if fin.tzinfo is None:
+        fin = fin.replace(tzinfo=timezone.utc)
+    return (fin - datetime.now(timezone.utc)).total_seconds() / 86400

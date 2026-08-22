@@ -32,7 +32,7 @@ from typing import Any
 from ..db import from_json, to_json
 from ..execution import PaperBroker
 from ..risk import OrderRequest
-from .sizing import kelly_usdc, retorno_esperado
+from .sizing import dias_hasta, kelly_usdc, retorno_esperado
 
 log = logging.getLogger("pmbot.strategies.copy")
 
@@ -372,6 +372,7 @@ class CopyTradingStrategy:
                 price=min(cur_price * (1 + self.max_slippage), 0.99),
                 reason=reason, strategy_budget_pct=self.budget_pct,
                 copied_wallet=leader["wallet"],
+                days_to_resolution=dias_hasta(market["end_date"]),
                 meta={"question": market["question"],
                       "copied_wallet": leader["wallet"],
                       "copied_entry_price": leader["price"]}))
@@ -449,6 +450,7 @@ class CopyTradingStrategy:
                     price=min(cur_price * (1 + self.max_slippage), 0.99),
                     reason=reason, strategy_budget_pct=self.budget_pct,
                     copied_wallet=leader,
+                    days_to_resolution=dias_hasta(market["end_date"]),
                     meta={"question": market["question"],
                           "copied_wallet": leader,
                           "copied_entry_price": cand["avg_entry"],

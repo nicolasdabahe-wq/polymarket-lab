@@ -238,7 +238,7 @@ class CryptoValueStrategy:
                 strategy=self.name, condition_id=row["condition_id"],
                 category="crypto", token_id=tokens[idx], outcome=outcome,
                 outcome_index=idx, side="BUY", size=size,
-                price=min(ask * 1.02, 0.99),
+                price=min(ask * 1.02, 0.99), days_to_resolution=days,
                 reason=reason, strategy_budget_pct=self.budget_pct,
                 meta={"question": row["question"], "model_p": model_p,
                       "live_ask": ask}))

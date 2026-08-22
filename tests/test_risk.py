@@ -154,3 +154,53 @@ def test_primera_entrada_en_el_mercado_pasa():
 def test_vender_no_se_bloquea_por_tener_posicion():
     s = state(held_outcomes={"0xm1": {0: 0.50}})
     assert evaluate(order(side="SELL"), s, LIMITS).approved
+
+
+# --- velocidad del capital (pedido del dueño, 2026-08-22) ---
+
+LIMITS_VEL = Limits(max_pct_per_market=0.20, max_pct_per_category=0.50,
+                    max_pct_per_copied_wallet=0.25, max_total_exposure_pct=0.85,
+                    daily_stop_loss_pct=0.20, min_order_usdc=10.0,
+                    max_days_to_resolution=21, slow_days=7, max_pct_slow=0.20)
+
+
+def test_rechaza_lo_que_tarda_demasiado():
+    """La alcaldía de LA se decide en noviembre: tres meses de capital
+    secuestrado con una cuenta de $237."""
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=85),
+                 state(), LIMITS_VEL)
+    assert not d.approved and "parado" in d.reason
+
+
+def test_acepta_lo_que_se_resuelve_pronto():
+    # Un partido de hoy o un mercado de cripto de esta semana.
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=0.4),
+                    state(), LIMITS_VEL).approved
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=6),
+                    state(), LIMITS_VEL).approved
+
+
+def test_limita_cuanto_capital_puede_estar_dormido():
+    # 20% de $500 = $100 en mercados lentos; ya hay $95, esta suma $15.
+    s = state(exposure_slow=95.0)
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=14), s, LIMITS_VEL)
+    assert not d.approved and "lentos" in d.reason
+
+
+def test_una_apuesta_rapida_no_toca_el_cupo_de_lentas():
+    s = state(exposure_slow=95.0)
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=1),
+                    s, LIMITS_VEL).approved
+
+
+def test_sin_fecha_conocida_no_se_bloquea():
+    # Mejor no frenar por ignorancia: si no sabemos cuándo resuelve, pasa.
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=None),
+                    state(exposure_slow=95.0), LIMITS_VEL).approved
+
+
+def test_vender_una_lenta_siempre_se_puede():
+    # Salir de una posición dormida libera capital: nunca se bloquea.
+    s = state(exposure_slow=200.0)
+    assert evaluate(order(side="SELL", days_to_resolution=90),
+                    s, LIMITS_VEL).approved

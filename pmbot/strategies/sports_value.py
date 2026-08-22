@@ -291,6 +291,9 @@ class SportsValueStrategy:
                 outcome_index=idx, side="BUY", size=usdc / ask,
                 price=min(ask * 1.02, 0.99), reason=razon,
                 strategy_budget_pct=self.budget_pct,
+                days_to_resolution=max(
+                    (inicio - datetime.now(timezone.utc)).total_seconds()
+                    / 86400, 0.0),
                 meta={"question": mercado["question"], "modelo": prob,
                       "ask": ask}))
         if fill.status == "FILLED":

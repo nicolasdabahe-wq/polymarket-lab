@@ -18,6 +18,7 @@
   python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
   python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
   python -m pmbot mlb                # qué opina nuestro modelo de béisbol vs el mercado
+  python -m pmbot capital [--vender] # cuánto capital está dormido (y liberarlo)
   python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
@@ -166,6 +167,63 @@ async def cmd_portfolio(app: App) -> None:
         print(f"\nTuyo, fuera del bot: ${external:.2f} — posiciones que "
               f"abriste vos y premios ganados sin cobrar.\n"
               f"  El bot las cuenta en el equity pero no las toca.")
+
+
+async def cmd_capital(app: App, vender: bool = False) -> None:
+    """Cuánto capital está dormido y en qué. Con --vender lo libera.
+
+    Con una cuenta chica el dinero parado no compone: una apuesta que se
+    resuelve en tres meses secuestra munición que en ese tiempo podría dar
+    varias vueltas.
+    """
+    from datetime import datetime, timezone
+
+    from .risk import OrderRequest
+    from .strategies.sizing import dias_hasta
+
+    lentas, rapido, total = [], 0.0, 0.0
+    for p in app.broker.positions():
+        marca = app.broker.mark_price(p["condition_id"],
+                                      p["outcome_index"] or 0, p["avg_price"])
+        valor = p["size"] * marca
+        total += valor
+        fila = app.conn.execute(
+            "SELECT end_date FROM markets WHERE condition_id = ?",
+            (p["condition_id"],)).fetchone()
+        dias = dias_hasta(fila["end_date"]) if fila else None
+        umbral = app.risk.limits.slow_days
+        if dias is not None and dias >= umbral:
+            lentas.append((dias, valor, marca, p))
+        else:
+            rapido += valor
+    print(f"\n💰 En posiciones: ${total:.2f}  "
+          f"(rápido ${rapido:.2f} | dormido ${total - rapido:.2f})")
+    if not lentas:
+        print("\nNada dormido: todo el capital se resuelve pronto. 👌")
+        return
+    lentas.sort(reverse=True)
+    print(f"\n{'días':>6} {'valor':>9} {'PnL':>9}  mercado")
+    for dias, valor, marca, p in lentas:
+        pnl = p["size"] * (marca - p["avg_price"])
+        print(f"{dias:6.0f} {valor:9.2f} {pnl:+9.2f}  "
+              f"{(p['question'] or '')[:52]}")
+    if not vender:
+        print("\nPara liberar ese capital: "
+              "python -m pmbot capital --vender")
+        return
+    hoy = datetime.now(timezone.utc).date().isoformat()
+    for dias, valor, marca, p in lentas:
+        fill = await app.broker.execute(
+            f"liberar:{p['condition_id']}:{p['outcome_index'] or 0}:{hoy}",
+            OrderRequest(
+                strategy=p["strategy"], condition_id=p["condition_id"],
+                category=p["category"] or "other", token_id=p["token_id"],
+                outcome=p["outcome"], outcome_index=p["outcome_index"] or 0,
+                side="SELL", size=p["size"], price=0.0,
+                reason=f"liberar capital: se resolvía en {dias:.0f} días"))
+        estado = "✅" if fill.status == "FILLED" else "⚠️"
+        print(f"{estado} {(p['question'] or '')[:46]:48} {fill.status} "
+              f"{fill.detail[:40]}")
 
 
 async def cmd_mlb(app: App) -> None:
@@ -505,6 +563,9 @@ def main() -> None:
     sub.add_parser("diagnose")
     sub.add_parser("wallets")
     sub.add_parser("mlb")
+    p_cap = sub.add_parser("capital")
+    p_cap.add_argument("--vender", action="store_true",
+                       help="vender las posiciones dormidas y liberar el dinero")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -558,6 +619,8 @@ def main() -> None:
                 cmd_wallets(app)
             elif args.command == "mlb":
                 await cmd_mlb(app)
+            elif args.command == "capital":
+                await cmd_capital(app, vender=args.vender)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":

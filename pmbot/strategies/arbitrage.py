@@ -131,6 +131,9 @@ class ArbitrageStrategy:
                     # margen de slippage: hasta comerse la mitad del edge
                     price=price + edge / 2,
                     reason=reason, strategy_budget_pct=self.budget_pct,
+                    # El arbitraje no inmoviliza capital de verdad: las dos
+                    # patas juntas ya valen $1 pase lo que pase.
+                    days_to_resolution=0.0,
                     meta={"question": row["question"]}))
             fills.append(fill)
         if all(f.status == "FILLED" for f in fills):

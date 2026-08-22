@@ -34,6 +34,12 @@ class Limits:
     daily_stop_loss_pct: float
     min_order_usdc: float = 1.0
     max_drawdown_pct: float = 1.0   # freno total desde el capital inicial
+    # Velocidad del capital. Con una cuenta chica, el dinero atado a un
+    # mercado que se resuelve en tres meses no compone: no pierde, pero
+    # tampoco da vueltas. Se limita cuánto se puede tener dormido.
+    max_days_to_resolution: float = 3650.0   # tope duro por apuesta
+    slow_days: float = 10.0                  # a partir de acá es "lenta"
+    max_pct_slow: float = 1.0                # máx del equity en lentas
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -45,6 +51,10 @@ class Limits:
             daily_stop_loss_pct=float(cfg.get("daily_stop_loss_pct", 0.05)),
             min_order_usdc=float(cfg.get("min_order_usdc", 1.0)),
             max_drawdown_pct=float(cfg.get("max_drawdown_pct", 1.0)),
+            max_days_to_resolution=float(
+                cfg.get("max_days_to_resolution", 3650)),
+            slow_days=float(cfg.get("slow_days", 10)),
+            max_pct_slow=float(cfg.get("max_pct_slow", 1.0)),
         )
 
 
@@ -63,6 +73,10 @@ class OrderRequest:
     strategy_budget_pct: float = 1.0
     copied_wallet: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    # Días hasta que el mercado se resuelva. Con capital chico, el dinero
+    # parado no compone: una apuesta a tres meses secuestra munición que
+    # podría dar varias vueltas en ese tiempo.
+    days_to_resolution: float | None = None
 
     @property
     def cost(self) -> float:
@@ -84,6 +98,8 @@ class PortfolioState:
     # {condition_id: {outcome_index: avg_price}}. Sirve para no pagar más
     # de $1 entre los dos lados del mismo evento.
     held_outcomes: dict[str, dict[int, float]] = field(default_factory=dict)
+    # Valor invertido en mercados que tardan en resolverse.
+    exposure_slow: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -112,6 +128,22 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                             f"${limits.min_order_usdc:.2f})")
     if cost > state.cash:
         return RiskDecision(False, f"cash insuficiente (${state.cash:.2f})")
+
+    # Velocidad del capital: no atar dinero a resoluciones lejanas.
+    dias = order.days_to_resolution
+    if dias is not None:
+        if dias > limits.max_days_to_resolution:
+            return RiskDecision(
+                False, f"se resuelve en {dias:.0f} días (máx "
+                       f"{limits.max_days_to_resolution:.0f}): el dinero "
+                       f"quedaría parado demasiado tiempo")
+        if dias >= limits.slow_days:
+            tope = limits.max_pct_slow * equity
+            if state.exposure_slow + cost > tope:
+                return RiskDecision(
+                    False, f"ya hay ${state.exposure_slow:.2f} en mercados "
+                           f"lentos y esta suma ${cost:.2f}: pasa el "
+                           f"{limits.max_pct_slow:.0%} del capital")
 
     # Los dos lados del mismo evento solo si JUNTOS cuestan menos de $1.
     # Comprar Musetti a 0.50 y Tiafoe a 0.69 es pagar 1.19 por algo que paga
