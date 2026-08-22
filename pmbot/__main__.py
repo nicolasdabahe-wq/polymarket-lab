@@ -16,6 +16,7 @@
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
+  python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
   python -m pmbot diagnose           # embudo: por qué se opera (o no) ahora mismo
   python -m pmbot run                # loop 24/7 (scheduler)
 """
@@ -164,6 +165,39 @@ async def cmd_portfolio(app: App) -> None:
         print(f"\nTuyo, fuera del bot: ${external:.2f} — posiciones que "
               f"abriste vos y premios ganados sin cobrar.\n"
               f"  El bot las cuenta en el equity pero no las toca.")
+
+
+def cmd_wallets(app: App) -> None:
+    """Quiénes están habilitadas para copia y en qué orden las vigila el bot."""
+    rows = app.conn.execute(
+        """SELECT b.wallet, b.roi, b.win_rate, b.n_copies, b.min_usdc,
+                  b.trades_por_dia, b.mediana_usdc, r.username, r.score
+           FROM wallet_backtest b
+           LEFT JOIN wallet_ranking r ON r.wallet = b.wallet
+           WHERE b.verdict = 'copiable' ORDER BY b.roi DESC""").fetchall()
+    if not rows:
+        print("Ninguna wallet habilitada. Corré: python -m pmbot validate-wallets")
+        return
+    n_fast = int(app.cfg.section("scheduler").get("fast_lane_wallets", 12))
+    print(f"\n{len(rows)} wallets habilitadas para copia "
+          f"(las primeras {n_fast} van en el carril rápido, cada 15s)\n")
+    print(f"{'':3} {'wallet':<24} {'ROI':>7} {'aciertos':>9} {'copias':>7} "
+          f"{'mín $':>7} {'trades/día':>11} {'mediana':>9}")
+    for i, r in enumerate(rows, 1):
+        marca = "⚡" if i <= n_fast else "  "
+        nombre = (r["username"] or r["wallet"][:16])[:24]
+        wr = f"{r['win_rate']:.0%}" if r["win_rate"] is not None else "—"
+        xdia = f"{r['trades_por_dia']:.0f}" if r["trades_por_dia"] else "—"
+        med = f"${r['mediana_usdc']:,.0f}" if r["mediana_usdc"] else "—"
+        print(f"{marca}{i:>2} {nombre:<24} {r['roi']:>+6.1%} {wr:>9} "
+              f"{r['n_copies']:>7} {r['min_usdc'] or 0:>7.0f} {xdia:>11} {med:>9}")
+    print(f"\n⚡ = carril rápido. El resto se vigila con la cinta (60s) "
+          f"y el barrido (5 min).")
+    rech = app.conn.execute(
+        """SELECT COUNT(*) c FROM wallet_backtest
+           WHERE verdict = 'rechazada' AND perfil = 'creador_de_mercado'"""
+    ).fetchone()["c"]
+    print(f"Descartadas por hacer mercado (imposibles de copiar): {rech}")
 
 
 async def cmd_validate_wallets(app: App, force: bool = False) -> None:
@@ -392,6 +426,7 @@ def main() -> None:
     p_val.add_argument("--force", action="store_true",
                        help="reevaluar a todas, sin esperar la ventana de 24h")
     sub.add_parser("diagnose")
+    sub.add_parser("wallets")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -441,6 +476,8 @@ def main() -> None:
                 await diagnose()
             elif args.command == "validate-wallets":
                 await cmd_validate_wallets(app, force=args.force)
+            elif args.command == "wallets":
+                cmd_wallets(app)
             elif args.command == "set-baseline":
                 cmd_set_baseline(app, args.amount)
             elif args.command == "run":
