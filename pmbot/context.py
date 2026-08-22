@@ -14,6 +14,7 @@ from .intel import BriefingBuilder, NewsAnalyzer, NewsFetcher
 from .monitor import Notifier
 from .risk import RiskManager
 from .backtest import CopyBacktester
+from .smart_money.tape import TradeTape
 from .smart_money import WalletScorer, WalletTracker, WalletValidator
 from .strategies import (ArbitrageStrategy, CopyTradingStrategy,
                          CryptoValueStrategy)
@@ -30,6 +31,7 @@ class App:
     market_store: MarketStore
     wallet_scorer: WalletScorer
     wallet_tracker: WalletTracker
+    tape: TradeTape
     wallet_validator: WalletValidator
     news_fetcher: NewsFetcher
     news_analyzer: NewsAnalyzer
@@ -76,6 +78,9 @@ def build_app(cfg: Config) -> App:
         market_store=MarketStore(conn),
         wallet_scorer=WalletScorer(data_api, conn, cfg.section("smart_money")),
         wallet_tracker=WalletTracker(data_api, conn, cfg.section("smart_money")),
+        tape=TradeTape(conn, http, min_usdc=float(
+            (cfg.section("strategies").get("copy_trading") or {})
+            .get("min_copy_usdc_of_wallet", 150))),
         wallet_validator=WalletValidator(
             conn, CopyBacktester(data_api, GammaClient(http)),
             cfg.section("smart_money"), api=data_api),

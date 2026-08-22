@@ -90,7 +90,18 @@ scheduler:
   # Polls intradía (minutos). Copias y arbitraje necesitan reacción rápida;
   # noticias no (y el LLM cuesta por corrida).
   intel_poll_minutes: 10
-  smart_money_poll_minutes: 3
+  # CARRIL RÁPIDO: las mejores wallets validadas, vigiladas segundo a
+  # segundo con /activity (el endpoint fresco: cache de 15s). Medido el
+  # 2026-08-22: 12 wallets se consultan en 0.7s sin rate-limit.
+  # Aquí es donde se evita llegar tarde y que el precio "vuele".
+  fast_lane_seconds: 15
+  fast_lane_wallets: 12
+  # Red media: una sola llamada trae todos los trades grandes del sitio y
+  # cubre a las wallets fuera del carril rápido. OJO: ese endpoint viene
+  # cacheado 300s y el dato trae 1-2 min de atraso, no sirve para correr.
+  tape_poll_seconds: 60
+  # Barrido completo de todas las wallets vigiladas: la red de seguridad.
+  smart_money_poll_minutes: 5
   markets_refresh_minutes: 5
   # Consenso de posiciones sostenidas: refresco de carteras + chequeo.
   # 10 min es el óptimo: las carteras cambian lento y más frecuencia solo

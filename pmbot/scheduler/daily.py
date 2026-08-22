@@ -308,6 +308,61 @@ class DailyRoutine:
             pending = self.app.news_fetcher.pending_analysis(limit=50)
             await self.app.news_analyzer.analyze_pending(pending)
 
+    def _watched_wallets(self) -> set[str]:
+        return {r["wallet"] for r in self.app.wallet_scorer.top_wallets()} | {
+            r["wallet"] for r in self.app.conn.execute(
+                "SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'")}
+
+    def _fast_lane_wallets(self, n: int) -> list[str]:
+        """Las mejores wallets validadas, ordenadas por el ROI que dio
+        copiarlas. Son las que se vigilan segundo a segundo."""
+        return [r["wallet"] for r in self.app.conn.execute(
+            """SELECT wallet FROM wallet_backtest WHERE verdict = 'copiable'
+               ORDER BY roi DESC LIMIT ?""", (n,))]
+
+    async def poll_fast_lane(self) -> None:
+        """Carril rápido: /activity de las mejores wallets cada pocos
+        segundos. Es el endpoint fresco (cache de 15s) y medido el
+        2026-08-22 doce wallets se consultan en 0.7s sin rate-limit.
+
+        Aquí es donde se gana la carrera: antes tardábamos hasta 3 minutos
+        en enterarnos y el precio ya había volado."""
+        wallets = self._fast_lane_wallets(self.app.cfg.section("scheduler")
+                                          .get("fast_lane_wallets", 12))
+        if not wallets:
+            return
+        trades = await self.app.wallet_tracker.poll_new_activity(wallets)
+        if not trades:
+            return
+        for t in trades:
+            log.info("CARRIL RÁPIDO: %s %s '%s' @%.2f (%.0f USDC)",
+                     t.wallet[:10], t.side, t.title[:50], t.price, t.usdc_size)
+        await self._copiar_ahora()
+
+    async def poll_tape(self) -> None:
+        """Red media: una sola llamada trae todos los trades grandes del
+        sitio y se filtran las wallets vigiladas. Cubre a las que no están
+        en el carril rápido con una sola petición.
+
+        OJO: este endpoint viene cacheado 300s y el dato llega con 1-2
+        minutos de atraso (medido el 2026-08-22), así que no sirve para
+        ganar la carrera: para eso está el carril rápido."""
+        trades = await self.app.tape.poll(self._watched_wallets())
+        if not trades:
+            return
+        for t in trades:
+            log.info("CINTA: %s %s '%s' @%.2f (%.0f USDC)",
+                     t.wallet[:10], t.side, t.title[:50], t.price, t.usdc)
+        await self._copiar_ahora()
+
+    async def _copiar_ahora(self) -> None:
+        copied = await self.app.copy_trading.process_signals()
+        for desc in copied:
+            log.info("COPIA intradía: %s", desc)
+        if copied:
+            await self.app.notifier.send(
+                "🤖 Copia ejecutada:\n" + "\n".join(f"• {d}" for d in copied))
+
     async def poll_smart_money(self) -> None:
         wallets = sorted({r["wallet"] for r in self.app.wallet_scorer.top_wallets()}
                          | {r["wallet"] for r in self.app.conn.execute(
@@ -320,14 +375,10 @@ class DailyRoutine:
             log.info("señal smart_money: %s %s '%s' @%.2f (%.0f USDC)",
                      t.wallet[:10], t.side, t.title[:50], t.price, t.usdc_size)
         if trades:
-            # Copia en tiempo real: el precio se mueve rápido tras la entrada
-            # de una wallet grande, no esperamos a la rutina diaria.
-            copied = await self.app.copy_trading.process_signals()
-            for desc in copied:
-                log.info("COPIA intradía: %s", desc)
-            if copied:
-                await self.app.notifier.send(
-                    "🤖 Copia ejecutada:\n" + "\n".join(f"• {d}" for d in copied))
+            # Red de seguridad: la cinta ya copió casi todo en vivo, esto
+            # recoge lo que se le haya escapado (trades por debajo del filtro
+            # de tamaño de la cinta).
+            await self._copiar_ahora()
 
     async def poll_reconcile(self) -> None:
         try:
@@ -374,6 +425,8 @@ async def run_forever(app: App) -> None:
     daily_utc = str(sched.get("daily_run_utc", "11:00"))
     intel_every = timedelta(minutes=float(sched.get("intel_poll_minutes", 30)))
     sm_every = timedelta(minutes=float(sched.get("smart_money_poll_minutes", 15)))
+    tape_every = timedelta(seconds=float(sched.get("tape_poll_seconds", 60)))
+    fast_every = timedelta(seconds=float(sched.get("fast_lane_seconds", 15)))
     markets_every = timedelta(minutes=float(sched.get("markets_refresh_minutes", 30)))
     consensus_every = timedelta(
         minutes=float(sched.get("holdings_consensus_minutes", 30)))
@@ -384,6 +437,8 @@ async def run_forever(app: App) -> None:
     next_daily = next_daily_run(now, daily_utc)
     next_intel = now  # primer poll inmediato
     next_sm = now
+    next_tape = now
+    next_fast = now
     next_markets = now
     next_consensus = now
     next_reconcile = now
@@ -415,6 +470,12 @@ async def run_forever(app: App) -> None:
             if now >= next_intel:
                 next_intel = now + intel_every
                 await routine.poll_intel()
+            if now >= next_fast:
+                next_fast = now + fast_every
+                await routine.poll_fast_lane()
+            if now >= next_tape:
+                next_tape = now + tape_every
+                await routine.poll_tape()
             if now >= next_sm:
                 next_sm = now + sm_every
                 await routine.poll_smart_money()
@@ -428,5 +489,7 @@ async def run_forever(app: App) -> None:
             # Ningún fallo transitorio debe tumbar el loop 24/7.
             log.exception("error en el ciclo del scheduler; sigo")
         wake = min(next_daily, next_intel, next_sm, next_markets,
-                   next_consensus, next_reconcile)
-        await asyncio.sleep(max((wake - datetime.now(timezone.utc)).total_seconds(), 1.0))
+                   next_consensus, next_reconcile, next_tape, next_fast)
+        # Mínimo 1s: con la cinta cada 10s el loop no puede dormirse de más.
+        await asyncio.sleep(
+            max((wake - datetime.now(timezone.utc)).total_seconds(), 1.0))
