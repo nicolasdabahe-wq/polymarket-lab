@@ -198,7 +198,10 @@ async def cmd_capital(app: App, vender: bool = False,
             (p["condition_id"],)).fetchone()
         dias = dias_hasta(fila["end_date"]) if fila else None
         umbral = app.risk.limits.slow_days
-        if dias is not None and dias >= umbral:
+        # dias negativo = el endDate ya pasó y el mercado sigue abierto:
+        # está en limbo (ej. una primaria que se fue a segunda vuelta).
+        # Es el peor capital dormido, el que no tiene fecha.
+        if dias is not None and (dias >= umbral or dias < -1):
             lentas.append((dias, valor, marca, p))
         else:
             rapido += valor
@@ -211,11 +214,14 @@ async def cmd_capital(app: App, vender: bool = False,
     print(f"\n{'días':>6} {'valor':>9} {'PnL':>9}  mercado")
     for dias, valor, marca, p in lentas:
         pnl = p["size"] * (marca - p["avg_price"])
-        print(f"{dias:6.0f} {valor:9.2f} {pnl:+9.2f}  "
+        etiqueta = "LIMBO" if dias < 0 else f"{dias:.0f}"
+        print(f"{etiqueta:>6} {valor:9.2f} {pnl:+9.2f}  "
               f"{(p['question'] or '')[:52]}")
     corte = (dias_min if dias_min is not None
              else app.risk.limits.max_days_to_resolution)
-    a_vender = [x for x in lentas if x[0] > corte]
+    # Se libera lo que supera el corte Y lo que está en limbo (fecha
+    # vencida sin resolución: puede tardar semanas más, nadie lo sabe).
+    a_vender = [x for x in lentas if x[0] > corte or x[0] < -1]
     if not vender:
         if a_vender:
             libera = sum(v for _, v, _, _ in a_vender)
