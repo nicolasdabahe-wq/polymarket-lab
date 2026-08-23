@@ -13,10 +13,54 @@ async def diagnose() -> None:
     print("DIAGNÓSTICO DEL EMBUDO DE TRADING")
     print("="*64)
 
+    # 0) LATIDO: distingue "el bot está muerto o ciego" de "está mirando
+    #    pero nada pasa los filtros". Es la primera pregunta a responder
+    #    cuando lleva horas sin operar.
+    ahora = datetime.now(timezone.utc)
+
+    def _hace(iso: str | None) -> str:
+        if not iso:
+            return "nunca"
+        try:
+            t = datetime.fromisoformat(iso)
+        except ValueError:
+            return iso
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        mins = (ahora - t).total_seconds() / 60
+        return (f"hace {mins:.0f} min" if mins < 120
+                else f"hace {mins/60:.1f} h")
+
+    ult_sig = conn.execute(
+        "SELECT MAX(created_at) t FROM signals WHERE source='smart_money'"
+    ).fetchone()["t"]
+    ult_ord = conn.execute(
+        "SELECT MAX(created_at) t FROM orders WHERE side='BUY'").fetchone()["t"]
+    h2 = (ahora - timedelta(hours=2)).isoformat()
+    sig_2h = conn.execute(
+        "SELECT COUNT(*) c FROM signals WHERE source='smart_money' "
+        "AND created_at >= ?", (h2,)).fetchone()["c"]
+    ord_2h = conn.execute(
+        "SELECT COUNT(*) c FROM orders WHERE side='BUY' AND created_at >= ?",
+        (h2,)).fetchone()["c"]
+    print(f"\n0) LATIDO")
+    print(f"   última señal vista : {_hace(ult_sig)}  ({sig_2h} en 2h)")
+    print(f"   última compra      : {_hace(ult_ord)}  ({ord_2h} en 2h)")
+    if sig_2h == 0:
+        print("   ⚠️  NO llegan señales: el problema es de vigilancia "
+              "(bot caído, API o wallets sin actividad), no de filtros.")
+    elif ord_2h == 0:
+        print("   → Llegan señales pero ninguna pasa los filtros. "
+              "El motivo exacto de cada descarte está en los logs.")
+
     scores = app.copy_trading._wallet_scores()
     thr = app.copy_trading._min_usdc_by_wallet()
+    frenadas = app.copy_trading._wallets_frenadas_en_vivo()
     print(f"\n1) WALLETS COPIABLES: {len(scores)}")
     print(f"   umbral de tamaño por wallet: {sorted(set(thr.values()))}")
+    if frenadas:
+        print(f"   ⛔ frenadas por pérdida real (≥${app.copy_trading.live_stop_usdc:.0f}): "
+              f"{len(frenadas)} → {', '.join(w[:10] for w in sorted(frenadas))}")
 
     # señales
     since = (datetime.now(timezone.utc)-timedelta(hours=24)).isoformat()
