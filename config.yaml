@@ -146,7 +146,8 @@ telegram:
 risk:
   # Límites duros: ninguna orden (ni paper ni real) se ejecuta sin pasarlos.
   # Perfil AGRESIVO pedido explícitamente por el dueño: sin techos de
-  # concentración; solo quedan los frenos de catástrofe y el kill switch.
+  # concentración y sin frenos por pérdidas. El único corte que queda es el
+  # kill switch, que es manual y suyo.
   # CARTERA ABIERTA (decisión explícita del dueño, 2026-08-22): sin techos
   # de concentración. El equity cayó de $278 a $195 y los techos, que se
   # miden como % del equity de HOY, bajaron con él: copy_trading quedó con
@@ -159,15 +160,16 @@ risk:
   max_pct_per_copied_wallet: 1.0
   max_pct_per_category: 1.0
   max_total_exposure_pct: 1.0
-  # Con apuestas de ~$14, un stop del 10% se alcanzaba con 2 posiciones
-  # perdidas: demasiado pronto. 20% da margen para ~4 antes de frenar el día.
-  daily_stop_loss_pct: 0.20
+  # SIN FRENOS DE CAPITAL. Instrucción literal del dueño (2026-08-22):
+  # "quita todo tipo de stop o freno". 1.0 = frenar solo al perder el 100%,
+  # que es la forma de apagarlos (un 0.0 los volvería permanentes).
+  # No queda ningún corte automático por pérdidas: el bot opera hasta que
+  # se acabe el capital o hasta que el dueño baje el kill switch a mano.
+  daily_stop_loss_pct: 1.0
   min_order_usdc: 10.0      # piso por apuesta pedido por el dueño
-  # Freno TOTAL: a diferencia del stop diario (que se reinicia cada día UTC),
-  # este no se levanta solo. Protege el capital cuando nadie está mirando.
-  # 60% => el bot para de comprar si el equity baja de ~$112.
-  # Decisión explícita del dueño (2026-08-21), advertido del alcance.
-  max_drawdown_pct: 0.60
+  # Freno total: también apagado por orden del dueño (2026-08-22), advertido
+  # de que sin él nada detiene al bot mientras nadie mira.
+  max_drawdown_pct: 1.0
   # VELOCIDAD DEL CAPITAL. Con una cuenta chica el dinero parado es el
   # enemigo silencioso: no pierde, pero tampoco compone. Una apuesta a un
   # senador que se define en noviembre secuestra munición que en ese tiempo

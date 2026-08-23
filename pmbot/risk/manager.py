@@ -185,13 +185,18 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                        f"con esta entrada a {order.price:.2f} el par cuesta "
                        f"{par:.2f} y solo paga 1.00")
 
-    if (state.day_start_equity > 0 and
+    # Los dos frenos de capital se APAGAN poniendo su porcentaje en 1.0
+    # ("frená cuando haya perdido el 100%"), y hay que comprobarlo aparte:
+    # un 0.0 no los apaga, los vuelve permanentes (frenaría ante el primer
+    # centavo de pérdida). El dueño los quitó explícitamente el 2026-08-22:
+    # "quita todo tipo de stop o freno".
+    if (limits.daily_stop_loss_pct < 1.0 and state.day_start_equity > 0 and
             equity <= state.day_start_equity * (1 - limits.daily_stop_loss_pct)):
         return RiskDecision(False, "stop diario activado: no se abren posiciones hoy")
 
     # Freno total: protege el capital cuando nadie está mirando. A diferencia
     # del stop diario (que se reinicia cada día UTC), este no se levanta solo.
-    if (state.starting_equity > 0 and
+    if (limits.max_drawdown_pct < 1.0 and state.starting_equity > 0 and
             equity <= state.starting_equity * (1 - limits.max_drawdown_pct)):
         return RiskDecision(
             False, f"FRENO TOTAL: caída de {limits.max_drawdown_pct:.0%} desde "

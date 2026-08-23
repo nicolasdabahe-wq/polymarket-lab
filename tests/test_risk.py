@@ -270,3 +270,57 @@ def test_cartera_abierta_no_frena_por_concentracion():
     d = evaluate(order(size=100, price=0.5, days_to_resolution=1,
                        strategy_budget_pct=1.0), s, LIMITS_ORO)
     assert d.approved, d.reason
+
+
+# --- frenos de capital apagados (pedido del dueño, 2026-08-22) ---
+# "Quita todo tipo de stop o freno."
+
+LIMITS_SIN_FRENO = Limits(
+    max_pct_per_market=1.0, max_pct_per_category=1.0,
+    max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+    daily_stop_loss_pct=1.0, min_order_usdc=10.0, max_drawdown_pct=1.0,
+    max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0)
+
+
+def test_el_stop_diario_apagado_no_frena_ni_perdiendo_casi_todo():
+    """El día va en -80%, cuatro veces peor que el viejo stop del 20%, y el
+    bot sigue comprando. Es exactamente lo que el dueño pidió."""
+    s = state(cash=100.0, equity=100.0, day_start_equity=500.0,
+              starting_equity=500.0, exposure_total=0.0)
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=1),
+                    s, LIMITS_SIN_FRENO).approved
+
+
+def test_el_freno_total_apagado_no_frena_ni_con_la_cuenta_deshecha():
+    """Caída del 80% desde el capital inicial: el viejo freno total saltaba
+    al 60% y ya no queda nada que detenga al bot."""
+    s = state(cash=100.0, equity=100.0, day_start_equity=100.0,
+              starting_equity=500.0, exposure_total=0.0)
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=1),
+                    s, LIMITS_SIN_FRENO).approved
+
+
+def test_cero_no_apaga_el_stop_lo_vuelve_permanente():
+    """Trampa que hay que dejar documentada: el porcentaje que apaga es 1.0.
+    Con 0.0 el stop saltaría ante la primera pérdida, no se desactivaría."""
+    limites = Limits(
+        max_pct_per_market=1.0, max_pct_per_category=1.0,
+        max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+        daily_stop_loss_pct=0.0, min_order_usdc=10.0,
+        max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0)
+    s = state(cash=300.0, equity=499.0, day_start_equity=500.0,
+              starting_equity=500.0)
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=1), s, limites)
+    assert not d.approved and "stop diario" in d.reason
+
+
+def test_sin_frenos_el_kill_switch_sigue_siendo_del_dueno(tmp_path):
+    """Lo único que puede parar al bot ahora es la mano del dueño."""
+    from pmbot.db import connect
+    from pmbot.risk.manager import RiskManager
+    conn = connect(tmp_path / "k.db")
+    rm = RiskManager(conn, {"daily_stop_loss_pct": 1.0,
+                            "max_drawdown_pct": 1.0}, tmp_path)
+    assert not rm.kill_switch_on()
+    rm.kill_file.touch()
+    assert rm.kill_switch_on()

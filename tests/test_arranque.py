@@ -60,10 +60,19 @@ def test_los_limites_de_velocidad_llegan_del_config(app):
     assert limites.golden_max_days == 10
 
 
+def test_no_queda_ningun_freno_por_perdidas(app):
+    """El dueño los quitó (2026-08-22). 1.0 es el valor que los apaga; si
+    alguno vuelve a bajar, el bot dejaría de comprar solo tras una mala
+    racha y nadie sabría por qué."""
+    limites = app.risk.limits
+    assert limites.daily_stop_loss_pct == 1.0
+    assert limites.max_drawdown_pct == 1.0
+
+
 def test_la_cartera_queda_abierta_sin_techos(app):
-    """Sin techos de concentración: el único freno que queda es el de
-    catástrofe. Si esto vuelve a bajar de 1.0 sin que el dueño lo pida,
-    el bot se autobloquea al caer el equity (pasó el 2026-08-22)."""
+    """Sin techos de concentración. Si esto vuelve a bajar de 1.0 sin que
+    el dueño lo pida, el bot se autobloquea al caer el equity: los techos se
+    miden contra el equity de hoy y bajan con él (pasó el 2026-08-22)."""
     limites = app.risk.limits
     assert limites.max_total_exposure_pct == 1.0
     assert limites.max_pct_per_market == 1.0
