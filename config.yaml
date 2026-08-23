@@ -187,7 +187,12 @@ risk:
   # del modelo / precio del libro − 1), copia con el retorno esperado del
   # backtest de esa wallet. 0.25 = esperamos ganar 25 centavos por dólar.
   # Con menos que eso, el dinero se queda libre para dar más vueltas.
-  golden_edge: 0.25
+  # Calibrado con los números del sábado 22: de las oportunidades que el bot
+  # encontró esa noche, una daba 16% y otra 29% — con el umbral en 0.25 solo
+  # pasaba una de cada dos. Bajado a 0.15 por decisión del dueño para ver más
+  # apuestas; sigue exigiendo una ventaja que la mayoría de los mercados no
+  # ofrece.
+  golden_edge: 0.15
   golden_max_days: 10          # ni una dorada se ata más de diez días
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.

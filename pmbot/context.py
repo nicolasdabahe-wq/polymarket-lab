@@ -107,7 +107,9 @@ def build_app(cfg: Config) -> App:
             conn, broker, strategies_cfg.get("copy_trading") or {},
             gamma=GammaClient(http), market_store=MarketStore(conn)),
         crypto_value=CryptoValueStrategy(conn, PriceFeed(http), broker,
-                                         strategies_cfg.get("crypto_value") or {}),
+                                         strategies_cfg.get("crypto_value") or {},
+                                         gamma=GammaClient(http),
+                                         market_store=MarketStore(conn)),
         sports_value=SportsValueStrategy(
             conn, MlbClient(http), GammaClient(http), broker,
             strategies_cfg.get("sports_value") or {}, MarketStore(conn),

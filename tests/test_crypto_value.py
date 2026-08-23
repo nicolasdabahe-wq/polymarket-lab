@@ -122,3 +122,55 @@ def test_las_carreras_entre_barreras_no_se_leen():
         "Will Ethereum hit $1,000 or $3,000 first?") is None
     assert parse_crypto_question(
         "Will Solana hit $60 or $140 first?") is None
+
+
+def test_la_estrategia_refresca_todo_el_universo_de_cripto():
+    """El cache diario guarda los 600 mercados de más volumen y solo ~84 son
+    de cripto: los strikes lejanos, donde el modelo más discrepa del mercado,
+    nunca se miraban. Con gamma la estrategia se trae el tag completo antes
+    de escanear."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.strategies.crypto_value import CryptoValueStrategy
+
+    pedidos: list[tuple[str, int]] = []
+    guardados: list[list] = []
+
+    class FakeGamma:
+        async def fetch_by_tag(self, tag, limit):
+            pedidos.append((tag, limit))
+            return ["mercado-lejano"]
+
+    class FakeStore:
+        def upsert_markets(self, ms):
+            guardados.append(ms)
+
+    class FakeBroker:
+        def equity(self):
+            return 200.0
+
+    import tempfile, pathlib
+    conn = connect(pathlib.Path(tempfile.mkdtemp()) / "c.db")
+    s = CryptoValueStrategy(conn, prices=None, broker=FakeBroker(),
+                            cfg={"enabled": True}, gamma=FakeGamma(),
+                            market_store=FakeStore())
+    asyncio.run(s.scan_and_execute())
+    assert pedidos == [("crypto", 250)]
+    assert guardados == [["mercado-lejano"]]
+
+
+def test_sin_gamma_la_estrategia_sigue_funcionando():
+    """Que el refresco sea opcional: sin gamma escanea lo que haya en cache
+    en vez de reventar."""
+    import asyncio
+    import pathlib
+    import tempfile
+
+    from pmbot.db import connect
+    from pmbot.strategies.crypto_value import CryptoValueStrategy
+
+    conn = connect(pathlib.Path(tempfile.mkdtemp()) / "c2.db")
+    s = CryptoValueStrategy(conn, prices=None, broker=None,
+                            cfg={"enabled": True})
+    assert asyncio.run(s.scan_and_execute()) == []

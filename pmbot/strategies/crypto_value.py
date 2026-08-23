@@ -153,10 +153,15 @@ class CryptoValueStrategy:
     name = "crypto_value"
 
     def __init__(self, conn: sqlite3.Connection, prices: PriceFeed,
-                 broker: PaperBroker, cfg: dict[str, Any]) -> None:
+                 broker: PaperBroker, cfg: dict[str, Any],
+                 gamma: Any = None, market_store: Any = None) -> None:
         self.conn = conn
         self.prices = prices
         self.broker = broker
+        # Con gamma + market_store la estrategia ve TODO el universo de
+        # cripto, no solo la rebanada que entra en el cache por volumen.
+        self.gamma = gamma
+        self.market_store = market_store
         self.enabled = bool(cfg.get("enabled", True))
         self.budget_pct = float(cfg.get("budget_pct", 0.20))
         self.base_pct = float(cfg.get("base_pct_per_trade", 0.05))
@@ -172,10 +177,20 @@ class CryptoValueStrategy:
             return []
         now = datetime.now(timezone.utc)
         executed: list[str] = []
+        # El cache diario guarda los 600 mercados de más volumen y de ahí
+        # solo ~84 son de cripto: los strikes lejanos, que es donde el
+        # modelo más discrepa del mercado, nunca llegaban a mirarse.
+        if self.gamma is not None and self.market_store is not None:
+            try:
+                frescos = await self.gamma.fetch_by_tag("crypto", limit=250)
+                if frescos:
+                    self.market_store.upsert_markets(frescos)
+            except Exception as exc:
+                log.debug("refresh de cripto falló: %s", exc)
         rows = self.conn.execute(
             """SELECT * FROM markets WHERE active = 1 AND category = 'crypto'
                AND yes_price IS NOT NULL AND end_date IS NOT NULL
-               ORDER BY volume_24h DESC LIMIT 150""").fetchall()
+               ORDER BY volume_24h DESC LIMIT 400""").fetchall()
         for row in rows:
             parsed = parse_crypto_question(row["question"])
             if not parsed:

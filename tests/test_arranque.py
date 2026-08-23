@@ -56,7 +56,7 @@ def test_los_limites_de_velocidad_llegan_del_config(app):
     días, salvo oportunidad dorada."""
     limites = app.risk.limits
     assert limites.max_days_to_resolution == 3
-    assert limites.golden_edge == pytest.approx(0.25)
+    assert limites.golden_edge == pytest.approx(0.15)
     assert limites.golden_max_days == 10
 
 
