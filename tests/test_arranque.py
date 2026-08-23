@@ -52,7 +52,25 @@ def test_el_estado_del_portfolio_se_calcula(app):
 
 
 def test_los_limites_de_velocidad_llegan_del_config(app):
+    """Política del dueño (2026-08-22): el dinero no se para más de tres
+    días, salvo oportunidad dorada."""
     limites = app.risk.limits
-    assert limites.max_days_to_resolution == 21
-    assert limites.slow_days == 12
-    assert limites.max_pct_slow == pytest.approx(0.20)
+    assert limites.max_days_to_resolution == 3
+    assert limites.golden_edge == pytest.approx(0.25)
+    assert limites.golden_max_days == 10
+
+
+def test_la_cartera_queda_abierta_sin_techos(app):
+    """Sin techos de concentración: el único freno que queda es el de
+    catástrofe. Si esto vuelve a bajar de 1.0 sin que el dueño lo pida,
+    el bot se autobloquea al caer el equity (pasó el 2026-08-22)."""
+    limites = app.risk.limits
+    assert limites.max_total_exposure_pct == 1.0
+    assert limites.max_pct_per_market == 1.0
+    assert limites.max_pct_per_category == 1.0
+    assert limites.max_pct_slow == 1.0
+    estrategias = app.cfg.section("strategies")
+    for nombre, scfg in estrategias.items():
+        pct = (scfg or {}).get("budget_pct")
+        if pct is not None:
+            assert pct == 1.0, f"{nombre} todavía tiene techo {pct}"

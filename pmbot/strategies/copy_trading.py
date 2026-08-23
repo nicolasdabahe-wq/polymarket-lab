@@ -283,8 +283,13 @@ class CopyTradingStrategy:
             "SELECT wallet, roi FROM wallet_backtest WHERE verdict = 'copiable'")}
 
     def _size_usdc(self, wallets: list[str], entry_price: float,
-                   cur_price: float, price_pagado: float) -> float:
-        """USDC a apostar según la ventaja estimada (Kelly fraccionado)."""
+                   cur_price: float, price_pagado: float
+                   ) -> tuple[float, float]:
+        """(USDC a apostar, ventaja estimada) por Kelly fraccionado.
+
+        La ventaja viaja con la orden porque el control de velocidad la
+        necesita: es lo único que compra días de más cuando el mercado se
+        resuelve lejos."""
         rois = self._wallet_rois()
         mejor_roi = max((rois.get(w, self.default_roi) for w in wallets),
                         default=self.default_roi)
@@ -294,9 +299,9 @@ class CopyTradingStrategy:
         usado = movido / self.max_slippage if self.max_slippage > 0 else 0.0
         exp_r = retorno_esperado(mejor_roi, len(wallets), usado,
                                  self.consensus_boost)
-        return kelly_usdc(self.broker.equity(), price_pagado, exp_r,
-                          self.kelly_fraction, self.min_trade_usdc,
-                          self.max_trade_pct)
+        return (kelly_usdc(self.broker.equity(), price_pagado, exp_r,
+                           self.kelly_fraction, self.min_trade_usdc,
+                           self.max_trade_pct), exp_r)
 
     def _precio_justo_sharp(self, condition_id: str,
                             outcome_index: int) -> float | None:
@@ -424,7 +429,7 @@ class CopyTradingStrategy:
         tokens = _json.loads(market["clob_token_ids"] or "[]")
         if cand.outcome_index >= len(tokens):
             return None
-        usdc_target = self._size_usdc(
+        usdc_target, ventaja = self._size_usdc(
             [w["wallet"] for w in cand.wallets], leader["price"], cur_price,
             cur_price)
         if usdc_target <= 0:
@@ -444,6 +449,7 @@ class CopyTradingStrategy:
                 outcome=cand.outcome, outcome_index=cand.outcome_index,
                 side="BUY", size=size,
                 price=min(cur_price * (1 + self.max_slippage), 0.99),
+                edge=ventaja,
                 reason=reason, strategy_budget_pct=self.budget_pct,
                 copied_wallet=leader["wallet"],
                 days_to_resolution=dias_hasta(market["end_date"]),
@@ -505,7 +511,7 @@ class CopyTradingStrategy:
             if idx >= len(tokens):
                 continue
             leader = max(cand["wallets"], key=lambda w: scores.get(w, 0))
-            usdc_target = self._size_usdc(
+            usdc_target, ventaja = self._size_usdc(
                 list(cand["wallets"]), cand["avg_entry"], cur_price, cur_price)
             if usdc_target <= 0:
                 continue
@@ -522,6 +528,7 @@ class CopyTradingStrategy:
                     outcome=cand["outcome"], outcome_index=idx, side="BUY",
                     size=size,
                     price=min(cur_price * (1 + self.max_slippage), 0.99),
+                    edge=ventaja,
                     reason=reason, strategy_budget_pct=self.budget_pct,
                     copied_wallet=leader,
                     days_to_resolution=dias_hasta(market["end_date"]),

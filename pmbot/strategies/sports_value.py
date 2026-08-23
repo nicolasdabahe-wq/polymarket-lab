@@ -351,6 +351,7 @@ class SportsValueStrategy:
                 category="sports", token_id=tokens[idx], outcome=outcome,
                 outcome_index=idx, side="BUY", size=usdc / ask,
                 price=min(ask * 1.02, 0.99), reason=razon,
+                edge=(prob / ask - 1.0),
                 strategy_budget_pct=self.budget_pct,
                 days_to_resolution=max(
                     (inicio - datetime.now(timezone.utc)).total_seconds()
@@ -453,6 +454,7 @@ class SportsValueStrategy:
                 category="sports", token_id=tokens[idx], outcome=salida,
                 outcome_index=idx, side="BUY", size=usdc / ask,
                 price=min(ask * 1.02, 0.99), reason=razon,
+                edge=(prob / ask - 1.0),
                 strategy_budget_pct=self.budget_pct,
                 days_to_resolution=max(
                     (inicio - datetime.now(timezone.utc)).total_seconds()

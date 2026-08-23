@@ -219,3 +219,54 @@ def test_recien_vencido_no_cuenta_como_limbo():
     # Un partido que terminó hace horas aún no liquidado no es limbo.
     assert evaluate(order(side="SELL", days_to_resolution=-0.3),
                     state(), LIMITS_VEL).approved
+
+
+# --- oportunidad dorada (pedido del dueño, 2026-08-22) ---
+# "Máximo 3 días parado, a menos que veas una oportunidad dorada."
+
+LIMITS_ORO = Limits(max_pct_per_market=1.0, max_pct_per_category=1.0,
+                    max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+                    daily_stop_loss_pct=0.20, min_order_usdc=10.0,
+                    max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0,
+                    golden_edge=0.25, golden_max_days=10)
+
+
+def test_ocho_dias_sin_ventaja_grande_se_rechaza():
+    """El BTC de fin de mes: 8 días de capital parado por una ventaja
+    mediocre no vale la pena."""
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=8, edge=0.10),
+                 state(), LIMITS_ORO)
+    assert not d.approved and "parado" in d.reason
+
+
+def test_ocho_dias_con_ventaja_dorada_pasa():
+    # Misma apuesta, pero esperamos ganar 30 centavos por dólar.
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=8, edge=0.30),
+                    state(), LIMITS_ORO).approved
+
+
+def test_ni_una_dorada_se_ata_mas_de_diez_dias():
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=25, edge=0.90),
+                 state(), LIMITS_ORO)
+    assert not d.approved and "parado" in d.reason
+
+
+def test_sin_ventaja_declarada_no_hay_excepcion():
+    """Si la estrategia no dice cuánta ventaja ve, no se le regalan días."""
+    d = evaluate(order(size=30, price=0.5, days_to_resolution=8, edge=None),
+                 state(), LIMITS_ORO)
+    assert not d.approved
+
+
+def test_lo_rapido_pasa_sin_necesitar_ventaja():
+    assert evaluate(order(size=30, price=0.5, days_to_resolution=2, edge=None),
+                    state(), LIMITS_ORO).approved
+
+
+def test_cartera_abierta_no_frena_por_concentracion():
+    """Sin techos: una sola apuesta puede llevarse casi todo el capital."""
+    s = state(exposure_by_market={"0xm1": 300.0}, exposure_total=300.0,
+              exposure_by_strategy={"copy_trading": 300.0})
+    d = evaluate(order(size=100, price=0.5, days_to_resolution=1,
+                       strategy_budget_pct=1.0), s, LIMITS_ORO)
+    assert d.approved, d.reason

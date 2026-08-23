@@ -145,12 +145,20 @@ telegram:
 
 risk:
   # Límites duros: ninguna orden (ni paper ni real) se ejecuta sin pasarlos.
-  # Perfil AGRESIVO pedido explícitamente por el dueño (2026-08-21):
-  # una posición puede llegar a ~20% del capital y el stop diario es 10%.
-  max_pct_per_market: 0.20
-  max_pct_per_copied_wallet: 0.25
-  max_pct_per_category: 0.50
-  max_total_exposure_pct: 0.85
+  # Perfil AGRESIVO pedido explícitamente por el dueño: sin techos de
+  # concentración; solo quedan los frenos de catástrofe y el kill switch.
+  # CARTERA ABIERTA (decisión explícita del dueño, 2026-08-22): sin techos
+  # de concentración. El equity cayó de $278 a $195 y los techos, que se
+  # miden como % del equity de HOY, bajaron con él: copy_trading quedó con
+  # $113 abiertos contra un techo de $97 y se autobloqueó sin haber comprado
+  # nada. La instrucción fue literal: "no pongas ningún techo, deja cartera
+  # abierta; si se acaba el bank, que se acabe, pero mínimo intentamos".
+  # Lo único que sigue en pie son los dos frenos de catástrofe (stop diario
+  # y freno total) y el kill switch.
+  max_pct_per_market: 1.0
+  max_pct_per_copied_wallet: 1.0
+  max_pct_per_category: 1.0
+  max_total_exposure_pct: 1.0
   # Con apuestas de ~$14, un stop del 10% se alcanzaba con 2 posiciones
   # perdidas: demasiado pronto. 20% da margen para ~4 antes de frenar el día.
   daily_stop_loss_pct: 0.20
@@ -164,13 +172,21 @@ risk:
   # enemigo silencioso: no pierde, pero tampoco compone. Una apuesta a un
   # senador que se define en noviembre secuestra munición que en ese tiempo
   # podría dar diez vueltas. Decisión del dueño (2026-08-22).
-  max_days_to_resolution: 21   # nada que tarde más de tres semanas
+  max_days_to_resolution: 3    # el dinero no se para más de tres días
   # "Lenta" es más de doce días, no más de una semana: con siete, los
   # mercados de cripto de fin de mes (que a 10 días son los que MÁS están
   # rindiendo) contaban como capital muerto y bloqueaban a la estrategia
   # que mejor funciona. Calibrado con la cartera real del 2026-08-22.
-  slow_days: 12
-  max_pct_slow: 0.20           # máximo 20% del capital dormido
+  slow_days: 3
+  max_pct_slow: 1.0            # sin techo: cartera abierta
+  # OPORTUNIDAD DORADA: la única excusa para pasar los tres días. Se mide en
+  # retorno esperado por dólar apostado, comparable entre estrategias, y cada
+  # una la calcula con su propio modelo: cripto y deportes con (probabilidad
+  # del modelo / precio del libro − 1), copia con el retorno esperado del
+  # backtest de esa wallet. 0.25 = esperamos ganar 25 centavos por dólar.
+  # Con menos que eso, el dinero se queda libre para dar más vueltas.
+  golden_edge: 0.25
+  golden_max_days: 10          # ni una dorada se ata más de diez días
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.
 
@@ -182,14 +198,14 @@ execution:
 strategies:
   arbitrage:
     enabled: true
-    budget_pct: 0.30          # máx fracción del equity en esta estrategia
+    budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     min_edge: 0.01            # edge mínimo neto (1%) para entrar
-    max_usdc_per_trade: 50    # risk/ igual re-verifica contra el 20% por mercado
+    max_usdc_per_trade: 50    # tope propio de la estrategia
     min_usdc_per_trade: 12
     scan_top_markets: 300
   copy_trading:
     enabled: true
-    budget_pct: 0.50
+    budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     # El tamaño ya NO es fijo: escala con la ventaja estimada (sizing.py).
     # Kelly fraccionado sobre el retorno esperado, que sale del ROI que dio
     # copiar a esa wallet en el backtest, ajustado por consenso y slippage.
@@ -256,7 +272,7 @@ strategies:
   # y XRP. No opina sobre nada: es aritmética.
   ladder_arb:
     enabled: true
-    budget_pct: 0.30
+    budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     min_edge: 0.015          # 1,5% asegurado como mínimo para mover dos patas
     max_usdc_per_pair: 60
     min_usdc_per_pair: 12
@@ -271,7 +287,7 @@ strategies:
   #   · ventaja de local
   sports_value:
     enabled: true
-    budget_pct: 0.25
+    budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     min_edge: 0.08          # el modelo debe discrepar >= 8 puntos del libro
     max_entry_price: 0.75
     min_trade_usdc: 12.0
@@ -296,11 +312,13 @@ strategies:
   # Coinbase) vs la probabilidad implícita del mercado de Polymarket.
   crypto_value:
     enabled: true
-    budget_pct: 0.20
+    budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     base_pct_per_trade: 0.05
     min_trade_usdc: 12.0
     min_edge: 0.08            # el modelo debe discrepar >=8 puntos de prob.
     max_entry_price: 0.85
     min_days_to_resolution: 0.5
-    max_days_to_resolution: 21   # alineado con el límite global de velocidad
+    # Alineado con el techo de una oportunidad dorada: más allá de diez días
+    # el riesgo rechaza igual, así que escanear más lejos es trabajo perdido.
+    max_days_to_resolution: 10
     vol_lookback_days: 30
