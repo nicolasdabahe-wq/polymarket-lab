@@ -452,3 +452,54 @@ def test_no_inventa_un_saldo_si_el_mensaje_es_otro():
     assert saldo_real_del_error("invalid amounts, max accuracy 2 decimals") is None
     assert saldo_real_del_error("not enough balance / allowance") is None
     assert saldo_real_del_error("") is None
+
+
+def test_la_correccion_de_saldo_ocurre_fuera_del_thread(tmp_path):
+    """_place_order corre en un thread y la conexión de SQLite no se puede
+    usar fuera del suyo. La primera versión de esta corrección escribía ahí
+    dentro y reventaba con 'SQLite objects created in a thread can only be
+    used in that same thread' en las tres ventas reales del 2026-08-22.
+
+    El test recorre la ruta de verdad: execute() manda _place_order a un
+    thread (que aquí solo devuelve el saldo del exchange, sin tocar la DB) y
+    la posición tiene que quedar corregida al volver.
+    """
+    import asyncio
+
+    from pmbot.execution.paper import Fill
+    from pmbot.risk import OrderRequest
+
+    b, _ = make_live(tmp_path)
+    conn = b.conn
+    with conn:
+        conn.execute(
+            """INSERT INTO paper_positions (strategy, condition_id, token_id,
+               outcome, outcome_index, size, avg_price, opened_at, updated_at)
+               VALUES ('copy_trading','0xc','t','Yes',0,2.93,0.35,
+                       '2026-08-22','2026-08-22')""")
+
+    hilos: list[int] = []
+
+    def falso_place_order(request, neg_risk):
+        import threading
+        hilos.append(threading.get_ident())
+        # lo que hace el de verdad: NO tocar self.conn, solo traer el dato
+        return Fill("", "REJECTED", saldo_real=0.001033,
+                    detail="el CLOB solo tiene 0.0010 shares")
+
+    b._place_order = falso_place_order
+    b._neg_risk_from_cache = lambda r: False
+    req = OrderRequest(strategy="copy_trading", condition_id="0xc",
+                       category="politics", token_id="t", outcome="Yes",
+                       outcome_index=0, side="SELL", size=2.93, price=0.35,
+                       reason="liberar")
+    fill = asyncio.run(b.execute("liberar:0xc:0", req))
+
+    import threading
+    assert hilos and hilos[0] != threading.get_ident(), (
+        "el test no probó nada: _place_order corrió en el hilo principal")
+    assert fill.status == "REJECTED"
+    # la posición fantasma desaparece de los libros
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM paper_positions WHERE condition_id='0xc'"
+    ).fetchone()["c"] == 0

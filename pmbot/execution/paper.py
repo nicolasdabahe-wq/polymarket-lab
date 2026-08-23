@@ -39,6 +39,11 @@ class Fill:
     # un rechazo de risk/ —que nunca salió— de uno del CLOB, que sí pudo
     # llenarse tarde en mercados con delay.
     sent: bool = False
+    # Shares que el exchange dice que tenemos, cuando rechaza una venta por
+    # saldo. Viaja acá porque quien lo descubre corre en un thread y la
+    # conexión de SQLite no se puede tocar desde ahí: la corrección la aplica
+    # execute(), ya de vuelta en el hilo principal.
+    saldo_real: float | None = None
 
 
 def simulate_book_fill(levels: list[BookLevel], size: float,

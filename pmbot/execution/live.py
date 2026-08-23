@@ -225,6 +225,9 @@ class LiveBroker(PaperBroker):
             fill = Fill(order_id, "REJECTED", detail=f"error del CLOB: {exc}")
             return self._record(order_id, request, fill)
 
+        if fill.saldo_real is not None:
+            self._corregir_posicion(request, fill.saldo_real)
+
         if fill.status == "FILLED":
             # Registrar en la contabilidad local (posiciones por estrategia).
             if request.side == "BUY":
@@ -304,11 +307,12 @@ class LiveBroker(PaperBroker):
                 # va a arreglar. Se corrige con el dato del exchange, que
                 # es el autoritativo.
                 if real is not None and real < size * 0.9:
-                    self._corregir_posicion(request, real)
-                    return Fill("", "REJECTED",
+                    # Ojo: acá estamos en un thread y la conexión de SQLite
+                    # no se puede usar fuera del suyo. El dato viaja en el
+                    # Fill y lo aplica execute().
+                    return Fill("", "REJECTED", saldo_real=real,
                                 detail=f"el CLOB solo tiene {real:.4f} shares "
-                                       f"y queríamos vender {size:.2f}: "
-                                       f"posición local corregida")
+                                       f"y queríamos vender {size:.2f}")
                 if ("not enough balance" in str(exc) and i < attempts - 1):
                     log.info("venta: balance aún no asentado, reintento en 5s "
                              "(%d/%d)", i + 1, attempts)
