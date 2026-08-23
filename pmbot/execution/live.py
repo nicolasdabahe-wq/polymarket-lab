@@ -57,15 +57,29 @@ def tick_decimals(tick: float) -> int:
     return max(0, min(6, round(-math.log10(tick))))
 
 
-def quantize_size(size: float, tick: float, min_shares: float) -> float:
-    """Ajusta el tamaño para que (size * price) tenga como mucho 2 decimales.
+def quantize_size(size: float, tick: float, min_shares: float,
+                  side: str = "BUY") -> float:
+    """Ajusta el tamaño a lo que el CLOB acepta. Pura.
 
-    El CLOB rechaza la orden si el monto en USDC lleva más precisión:
-    'maker amount supports a max accuracy of 2 decimals'. Con el precio ya
-    cuantizado al tick, basta con que el tamaño sea múltiplo de
-    10^(decimales_del_tick - 2): con tick 0.01 son shares enteras, con
-    tick 0.001 múltiplos de 10, etc.
+    La regla del exchange cae siempre sobre el 'maker amount', y ese cambia
+    de lado según la operación:
+
+    - COMPRANDO el maker son los USDC, que admiten 2 decimales ('maker
+      amount supports a max accuracy of 2 decimals'). Con el precio ya
+      cuantizado al tick, basta con que el tamaño sea múltiplo de
+      10^(decimales_del_tick - 2): con tick 0.01 son shares enteras, con
+      tick 0.001 múltiplos de 10.
+
+    - VENDIENDO el maker son las shares, y la librería ya las baja a 2
+      decimales por su cuenta. Aplicarles la regla de la compra dejaba
+      atrapadas las posiciones chicas: 2,93 shares en un mercado de tick
+      0.001 se cuantizaban a 0 y no había forma de salir de ellas nunca
+      (pasó con tres posiciones reales el 2026-08-22). Tampoco corre el
+      mínimo de shares: de una posición hay que poder salir entera, y el
+      broker ya exime a las ventas de ese mínimo al entrar.
     """
+    if side == "SELL":
+        return math.floor(size * 100) / 100
     step = 10 ** max(0, tick_decimals(tick) - 2)
     quantized = math.floor(size / step) * step
     return float(quantized) if quantized >= min_shares else 0.0
@@ -228,7 +242,7 @@ class LiveBroker(PaperBroker):
         if request.side == "SELL" and price <= 0:
             price = tick  # venta "a mercado": límite en el mínimo posible
         # El monto en USDC (size*price) admite 2 decimales como máximo.
-        size = quantize_size(request.size, tick, MIN_SHARES)
+        size = quantize_size(request.size, tick, MIN_SHARES, request.side)
         if size <= 0:
             return Fill("", "REJECTED",
                         detail=f"tamaño {request.size:.2f} < mínimo tras "

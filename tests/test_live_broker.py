@@ -324,3 +324,33 @@ def test_el_monto_en_usdc_siempre_cae_en_centavos_enteros():
                     f"tick {tick_str}, {size} shares @ {price} deja "
                     f"{wei / 1e6:.6f} USDC, que el CLOB rechaza")
     assert probadas > 1000, f"solo se probaron {probadas} combinaciones"
+
+
+def test_una_posicion_chica_siempre_se_puede_vender():
+    """Las tres posiciones que quedaron atrapadas el 2026-08-22: la regla de
+    la COMPRA (múltiplos de 10 con tick 0.001) se les aplicaba también al
+    vender y las cuantizaba a cero, así que no había forma de salir de ellas
+    nunca. Vendiendo, el 'maker amount' son las shares y basta con 2
+    decimales."""
+    from pmbot.execution.live import quantize_size
+
+    for shares, tick in [(2.93, 0.001), (0.52, 0.01), (3.68, 0.001)]:
+        assert quantize_size(shares, tick, 5.0, "SELL") == shares, (shares, tick)
+        # comprando esa misma cantidad sí se rechaza: es menos del mínimo
+        assert quantize_size(shares, tick, 5.0, "BUY") == 0.0
+
+
+def test_vender_recorta_a_dos_decimales_de_shares():
+    from pmbot.execution.live import quantize_size
+
+    assert quantize_size(41.5678, 0.001, 5.0, "SELL") == 41.56
+    assert quantize_size(7.0, 0.001, 5.0, "SELL") == 7.0
+
+
+def test_comprar_no_cambia_de_comportamiento():
+    """La regla de la compra se queda igual: es la que evita que el CLOB
+    rechace por 'invalid amounts'."""
+    from pmbot.execution.live import quantize_size
+
+    assert quantize_size(19.3, 0.01, 5.0) == quantize_size(19.3, 0.01, 5.0, "BUY")
+    assert quantize_size(97.0, 0.001, 5.0, "BUY") == 90.0
