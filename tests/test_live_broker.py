@@ -427,3 +427,28 @@ def test_un_rechazo_que_si_salio_al_exchange_tampoco_se_pisa(tmp_path):
                                sent=True))
     b._record("x:1", req, Fill("x:1", "FILLED", 40.0, 0.50, 20.0, sent=True))
     assert _fila(conn, "x:1")["status"] == "NO_LIQUIDITY"
+
+
+def test_lee_el_saldo_real_del_error_del_clob():
+    """El exchange dice cuántas shares tenemos de verdad dentro de su propio
+    mensaje de error. Es el dato autoritativo: más fiable que nuestros libros.
+    Los tres casos son los reales del 2026-08-22."""
+    from pmbot.execution.live import saldo_real_del_error
+
+    msg = ("PolyApiException[status_code=400, error_message={'error': 'not "
+           "enough balance / allowance: the balance is not enough -> "
+           "balance: 1033, order amount: 2930000'}]")
+    assert saldo_real_del_error(msg) == pytest.approx(0.001033)
+    assert saldo_real_del_error(
+        "not enough balance -> balance: 8831, order amount: 3670000"
+    ) == pytest.approx(0.008831)
+
+
+def test_no_inventa_un_saldo_si_el_mensaje_es_otro():
+    """Ante cualquier duda, None: corregir la contabilidad con un número mal
+    leído sería peor que no corregirla."""
+    from pmbot.execution.live import saldo_real_del_error
+
+    assert saldo_real_del_error("invalid amounts, max accuracy 2 decimals") is None
+    assert saldo_real_del_error("not enough balance / allowance") is None
+    assert saldo_real_del_error("") is None

@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import sqlite3
 import time
 from typing import Any
@@ -83,6 +84,22 @@ def quantize_size(size: float, tick: float, min_shares: float,
     step = 10 ** max(0, tick_decimals(tick) - 2)
     quantized = math.floor(size / step) * step
     return float(quantized) if quantized >= min_shares else 0.0
+
+
+def saldo_real_del_error(mensaje: str) -> float | None:
+    """Shares que el CLOB dice que tenemos, leídas de su propio error. Pura.
+
+    El mensaje viene como 'the balance is not enough -> balance: 1033, order
+    amount: 2930000', en unidades de 6 decimales. Es la respuesta autoritativa
+    del exchange sobre cuánto hay: más fiable que nuestra contabilidad.
+    Devuelve None si el mensaje no es exactamente ese, para no inventar nada.
+    """
+    if "not enough balance" not in mensaje:
+        return None
+    m = re.search(r"balance:\s*(\d+)\s*,\s*order amount:\s*(\d+)", mensaje)
+    if not m:
+        return None
+    return int(m.group(1)) / 1e6
 
 
 def parse_post_response(resp: dict[str, Any], side: str, req_size: float,
@@ -279,6 +296,19 @@ class LiveBroker(PaperBroker):
                 resp = client.post_order(order, OrderType.FAK)
                 break
             except Exception as exc:
+                real = saldo_real_del_error(str(exc))
+                # Reintentar solo tiene sentido si el saldo está por
+                # asentarse tras una compra reciente. Si el CLOB dice que
+                # apenas tenemos una fracción de lo que queremos vender, no
+                # es demora: nuestra contabilidad está mal y esperar no la
+                # va a arreglar. Se corrige con el dato del exchange, que
+                # es el autoritativo.
+                if real is not None and real < size * 0.9:
+                    self._corregir_posicion(request, real)
+                    return Fill("", "REJECTED",
+                                detail=f"el CLOB solo tiene {real:.4f} shares "
+                                       f"y queríamos vender {size:.2f}: "
+                                       f"posición local corregida")
                 if ("not enough balance" in str(exc) and i < attempts - 1):
                     log.info("venta: balance aún no asentado, reintento en 5s "
                              "(%d/%d)", i + 1, attempts)
@@ -353,6 +383,32 @@ class LiveBroker(PaperBroker):
                               reason + " — reclamar en la app (Claim)")
         self._balance_cache = None
         return fill
+
+    def _corregir_posicion(self, request: OrderRequest, reales: float) -> None:
+        """Ajusta la posición local al saldo que el exchange dice tener.
+
+        La reconciliación solo sabe ADOPTAR lo que falta: nunca restaba, así
+        que una posición que la cadena no respalda se quedaba en los libros
+        para siempre, inflando el equity e intentando venderse en cada
+        barrido. Estas nacen de compras que salieron al CLOB y nunca
+        llenaron: la contabilidad las cuenta enteras por si el fill llega
+        tarde, y cuando no llega nadie las bajaba.
+        """
+        with self.conn:
+            if reales < 0.01:
+                self.conn.execute(
+                    """DELETE FROM paper_positions
+                       WHERE condition_id = ? AND outcome = ?""",
+                    (request.condition_id, request.outcome))
+            else:
+                self.conn.execute(
+                    """UPDATE paper_positions SET size = ?, updated_at = ?
+                       WHERE condition_id = ? AND outcome = ?""",
+                    (reales, _now(), request.condition_id, request.outcome))
+        log.warning("posición corregida en '%s' (%s): teníamos %.2f shares "
+                    "en los libros y el CLOB solo tiene %.4f",
+                    request.condition_id[:12], request.outcome,
+                    request.size, reales)
 
     def _bot_shares(self, condition_id: str, outcome: str) -> float:
         """Techo de lo que el bot puede reclamar como suyo en ese outcome:
