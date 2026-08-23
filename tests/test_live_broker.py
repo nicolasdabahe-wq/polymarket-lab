@@ -279,3 +279,48 @@ def test_risk_rejected_order_gives_no_claim_on_shares(tmp_path):
     api = FakeDataApi([onchain_pos(size=30.0, cur_price=0.50)])
     assert asyncio.run(broker.reconcile_positions(api)) == []
     assert broker.positions() == []
+
+
+def test_el_monto_en_usdc_siempre_cae_en_centavos_enteros():
+    """La regla que el CLOB aplica a las compras a mercado: el monto en USDC
+    admite 2 decimales como máximo ('invalid amounts, the market buy orders
+    maker amount supports a max accuracy of 2 decimals'). Rechazó 18 órdenes
+    reales antes de existir quantize_size. Se reproduce la aritmética exacta
+    de la librería sobre todo el rango de precios y tamaños que usamos.
+    """
+    from py_clob_client_v2.order_builder.builder import ROUNDING_CONFIG
+    from py_clob_client_v2.order_builder.helpers import (
+        decimal_places, round_down, round_normal, round_up, to_token_decimals)
+
+    from pmbot.execution.live import quantize_size, round_to_tick, tick_decimals
+
+    def maker_amount_wei(size: float, price: float, tick_str: str) -> int:
+        rc = ROUNDING_CONFIG[tick_str]
+        raw_price = round_normal(price, rc.price)
+        taker = round_down(size, rc.size)
+        maker = taker * raw_price
+        if decimal_places(maker) > rc.amount:
+            maker = round_up(maker, rc.amount + 4)
+            if decimal_places(maker) > rc.amount:
+                maker = round_down(maker, rc.amount)
+        return to_token_decimals(maker)
+
+    probadas = 0
+    for tick_str in ["0.01", "0.001", "0.005", "0.0001"]:
+        tick = float(tick_str)
+        for usdc in (12.0, 13.2, 15.0, 18.0, 23.5):
+            for milesimas in range(30, 760, 7):
+                price = round(round_to_tick(milesimas / 1000, tick, "BUY"),
+                              tick_decimals(tick))
+                if price <= 0:
+                    continue
+                size = quantize_size(usdc / price, tick, 5.0)
+                if size <= 0:
+                    continue
+                probadas += 1
+                wei = maker_amount_wei(size, price, tick_str)
+                # 1 centavo = 10.000 en unidades de 6 decimales.
+                assert wei % 10_000 == 0, (
+                    f"tick {tick_str}, {size} shares @ {price} deja "
+                    f"{wei / 1e6:.6f} USDC, que el CLOB rechaza")
+    assert probadas > 1000, f"solo se probaron {probadas} combinaciones"

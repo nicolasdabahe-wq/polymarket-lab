@@ -151,14 +151,19 @@ async def diagnose() -> None:
     # Los motivos van COMPLETOS: recortados a 40 caracteres escondían justo
     # la parte que importa de los errores del CLOB (el status y el cuerpo),
     # que es lo único que dice por qué no entró una orden.
+    # Con la fecha del último caso: sin ella no se distingue una cicatriz
+    # vieja (un bug ya corregido, una política ya cambiada) de un problema
+    # que está pasando ahora, y son cosas opuestas.
     rech = conn.execute(
-        """SELECT reject_reason, COUNT(*) c FROM orders
+        """SELECT reject_reason, COUNT(*) c, MAX(created_at) ult FROM orders
            WHERE reject_reason IS NOT NULL
-           GROUP BY reject_reason ORDER BY c DESC LIMIT 8""").fetchall()
+           GROUP BY reject_reason ORDER BY MAX(created_at) DESC LIMIT 8"""
+    ).fetchall()
     if rech:
-        print("\n6) POR QUÉ SE RECHAZARON LAS ÓRDENES (histórico)")
+        print("\n6) POR QUÉ SE RECHAZARON LAS ÓRDENES (por lo más reciente)")
         for r in rech:
-            print(f"   {r['c']:>3}x  {r['reject_reason']}")
+            print(f"   {r['c']:>3}x  última {_hace(r['ult'])}")
+            print(f"        {r['reject_reason']}")
     ultimos = conn.execute(
         """SELECT created_at, status, reject_reason, reason FROM orders
            WHERE side = 'BUY' ORDER BY created_at DESC LIMIT 5""").fetchall()
