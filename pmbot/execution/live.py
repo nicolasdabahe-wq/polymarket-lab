@@ -554,6 +554,60 @@ class LiveBroker(PaperBroker):
             log.warning("RECONCILIACIÓN: %s", note)
             notes.append(note)
 
+        # Espejo hacia ABAJO: lo que el dueño vende a mano tiene que salir de
+        # los libros. La adopción solo suma; sin esta pasada, una venta manual
+        # dejaba la posición local viva inflando el equity, y al resolverse el
+        # mercado se registraba el payout de shares que ya no existían (pasó
+        # el 2026-08-22: el dueño vendió ETH >$2.400 desde la app y los
+        # libros conservaban las 50,9 shares enteras). El cash no necesita
+        # ajuste: se lee del saldo real, que ya recibió la venta.
+        from datetime import datetime, timedelta, timezone
+        corte = (datetime.now(timezone.utc)
+                 - timedelta(minutes=20)).isoformat(timespec="seconds")
+        # Presupuesto por (mercado, outcome): si dos estrategias comparten la
+        # posición, cada fila reclama su parte y el resto se recorta.
+        vivo: dict[tuple[str, str], float] = {}
+        for pos in onchain:
+            clave = (pos.condition_id, pos.outcome)
+            vivo[clave] = vivo.get(clave, 0.0) + pos.size
+        for row in self.conn.execute(
+                "SELECT * FROM paper_positions ORDER BY strategy").fetchall():
+            clave = (row["condition_id"], row["outcome"])
+            local = float(row["size"])
+            queda = min(local, vivo.get(clave, 0.0))
+            vivo[clave] = vivo.get(clave, 0.0) - queda
+            # Tolerancia gorda a propósito: la Data API redondea distinto que
+            # nuestros libros (38.15 vs 38.2) y con 0.01 cada barrido habría
+            # "detectado" ventas manuales de centavos que no existieron.
+            if queda >= local - max(0.5, local * 0.01):
+                continue
+            # Una compra recién llenada tarda ~1-2 min en aparecer en la
+            # Data API: con órdenes frescas en el mercado no se resta nada,
+            # que restar de más es peor que esperar al próximo barrido.
+            if self.conn.execute(
+                    """SELECT 1 FROM orders WHERE condition_id = ?
+                       AND created_at >= ? LIMIT 1""",
+                    (row["condition_id"], corte)).fetchone():
+                continue
+            with self.conn:
+                if queda < 0.01:
+                    self.conn.execute(
+                        """DELETE FROM paper_positions WHERE strategy = ?
+                           AND condition_id = ? AND outcome = ?""",
+                        (row["strategy"], row["condition_id"], row["outcome"]))
+                else:
+                    self.conn.execute(
+                        """UPDATE paper_positions SET size = ?, updated_at = ?
+                           WHERE strategy = ? AND condition_id = ?
+                           AND outcome = ?""",
+                        (queda, _now(), row["strategy"], row["condition_id"],
+                         row["outcome"]))
+            note = (f"venta manual detectada: '{(row['question'] or '')[:42]}' "
+                    f"({row['outcome']}) baja de {local:.1f} a {queda:.1f} "
+                    f"shares en los libros")
+            log.warning("RECONCILIACIÓN: %s", note)
+            notes.append(note)
+
         self._refresh_external_value(onchain)
         return notes
 

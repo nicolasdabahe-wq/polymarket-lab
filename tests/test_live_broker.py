@@ -503,3 +503,66 @@ def test_la_correccion_de_saldo_ocurre_fuera_del_thread(tmp_path):
     assert conn.execute(
         "SELECT COUNT(*) c FROM paper_positions WHERE condition_id='0xc'"
     ).fetchone()["c"] == 0
+
+
+def _posicion_local(conn, cid="0xeth", outcome="No", size=50.91,
+                    strategy="crypto_value"):
+    with conn:
+        conn.execute(
+            """INSERT INTO paper_positions (strategy, condition_id, token_id,
+               outcome, outcome_index, size, avg_price, question, category,
+               opened_at, updated_at)
+               VALUES (?,?,?,?,1,?,0.25,'ETH above 2400','crypto',
+                       '2026-08-20T00:00:00','2026-08-20T00:00:00')""",
+            (strategy, cid, "tk", outcome, size))
+
+
+def test_reconcile_resta_lo_que_el_dueno_vendio_a_mano(tmp_path):
+    """El caso real del 2026-08-22: el dueño vendió ETH >$2.400 desde la app
+    y los libros conservaban las 50,9 shares. Al resolver el mercado se habría
+    registrado el payout de shares inexistentes."""
+    broker, _ = make_live(tmp_path)
+    _posicion_local(broker.conn)
+    # on-chain ya no está (el dueño la vendió); solo queda otra posición
+    notes = asyncio.run(broker.reconcile_positions(
+        FakeDataApi([onchain_pos(condition_id="0xotra")])))
+    assert any("venta manual" in n for n in notes)
+    assert broker.positions() == []
+
+
+def test_reconcile_respeta_una_venta_parcial(tmp_path):
+    broker, _ = make_live(tmp_path)
+    _posicion_local(broker.conn, size=50.0)
+    api = FakeDataApi([onchain_pos(condition_id="0xeth", outcome="No",
+                                   outcome_index=1, size=20.0)])
+    asyncio.run(broker.reconcile_positions(api))
+    assert broker.positions()[0]["size"] == pytest.approx(20.0)
+
+
+def test_reconcile_no_resta_con_ordenes_frescas(tmp_path):
+    from pmbot.execution import paper
+    """Una compra recién llenada tarda ~1-2 min en aparecer en la Data API:
+    restar en esa ventana borraría posiciones reales recién abiertas."""
+    broker, _ = make_live(tmp_path)
+    _posicion_local(broker.conn)
+    with broker.conn:
+        broker.conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, side, req_size,
+               status, sent, created_at)
+               VALUES ('o-fresca','crypto_value','0xeth','BUY',50.91,
+                       'FILLED',1,?)""", (paper._now(),))
+    notes = asyncio.run(broker.reconcile_positions(FakeDataApi([])))
+    assert notes == []
+    assert broker.positions()[0]["size"] == pytest.approx(50.91)
+
+
+def test_reconcile_tolera_el_redondeo_de_la_data_api(tmp_path):
+    """38.2 en libros vs 38.15 en la API no es una venta manual, es redondeo:
+    sin tolerancia, cada barrido de 5 min avisaría de ventas de centavos."""
+    broker, _ = make_live(tmp_path)
+    _posicion_local(broker.conn, cid="0xlol", outcome="Yes", size=38.2)
+    api = FakeDataApi([onchain_pos(condition_id="0xlol", outcome="Yes",
+                                   size=38.15)])
+    notes = asyncio.run(broker.reconcile_positions(api))
+    assert notes == []
+    assert broker.positions()[0]["size"] == pytest.approx(38.2)
