@@ -172,10 +172,23 @@ class LiveBroker(PaperBroker):
 
     async def execute(self, order_id: str, request: OrderRequest) -> Fill:
         existing = self.conn.execute(
-            "SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+            "SELECT status, sent FROM orders WHERE id = ?",
+            (order_id,)).fetchone()
         if existing:
-            return Fill(order_id, "DUPLICATE",
-                        detail=f"ya ejecutada ({existing['status']})")
+            # Un intento RECHAZADO que nunca salió al exchange no es un
+            # duplicado: no movió un centavo, así que hay que poder
+            # reintentarlo. Tratarlo como ejecutado dejaba una orden mala
+            # bloqueando su propio arreglo hasta el día siguiente (pasó el
+            # 2026-08-22 con tres ventas que no se podían reintentar).
+            # La columna 'sent' es la que decide: si llegó al CLOB, no se
+            # repite nunca, porque podría ejecutarse dos veces.
+            reintentable = (existing["status"] == "REJECTED"
+                            and not existing["sent"])
+            if not reintentable:
+                return Fill(order_id, "DUPLICATE",
+                            detail=f"ya ejecutada ({existing['status']})")
+            log.info("reintento de %s: el intento anterior fue rechazado "
+                     "sin llegar al exchange", order_id)
         if request.side == "BUY" and request.size < MIN_SHARES:
             return self._record(order_id, request, Fill(
                 order_id, "REJECTED", detail=f"mínimo {MIN_SHARES:.0f} shares"))

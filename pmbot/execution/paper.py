@@ -331,13 +331,32 @@ class PaperBroker:
 
     def _record(self, order_id: str, r: OrderRequest, fill: Fill) -> Fill:
         with self.conn:
+            # Un intento rechazado que nunca salió al exchange se puede
+            # reintentar (ver LiveBroker.execute), y entonces su fila tiene
+            # que actualizarse con el resultado nuevo. Con INSERT OR IGNORE
+            # el reintento se ejecutaba de verdad pero quedaba sin registrar,
+            # y el bot creía que seguía teniendo la posición.
+            # La condición del UPDATE es la garantía: una orden que SÍ llegó
+            # al exchange (sent = 1) o que se llenó no se pisa jamás.
             self.conn.execute(
-                """INSERT OR IGNORE INTO orders (id, strategy, condition_id,
+                """INSERT INTO orders (id, strategy, condition_id,
                    token_id, outcome, outcome_index, side, req_size,
                    limit_price, status, fill_size, fill_price, fill_usdc,
                    fee_usdc, realized_pnl, reason, reject_reason, sent,
                    created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     status=excluded.status, req_size=excluded.req_size,
+                     limit_price=excluded.limit_price,
+                     fill_size=excluded.fill_size,
+                     fill_price=excluded.fill_price,
+                     fill_usdc=excluded.fill_usdc,
+                     fee_usdc=excluded.fee_usdc,
+                     realized_pnl=excluded.realized_pnl,
+                     reason=excluded.reason,
+                     reject_reason=excluded.reject_reason,
+                     sent=excluded.sent, created_at=excluded.created_at
+                   WHERE orders.status = 'REJECTED' AND orders.sent = 0""",
                 (order_id, r.strategy, r.condition_id, r.token_id, r.outcome,
                  r.outcome_index, r.side, r.size, r.price, fill.status,
                  fill.size or None, fill.price or None, fill.usdc or None,

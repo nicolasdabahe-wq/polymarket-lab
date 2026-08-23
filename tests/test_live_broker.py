@@ -354,3 +354,76 @@ def test_comprar_no_cambia_de_comportamiento():
 
     assert quantize_size(19.3, 0.01, 5.0) == quantize_size(19.3, 0.01, 5.0, "BUY")
     assert quantize_size(97.0, 0.001, 5.0, "BUY") == 90.0
+
+
+def _fila(conn, oid):
+    return conn.execute("SELECT * FROM orders WHERE id = ?", (oid,)).fetchone()
+
+
+def test_un_rechazo_que_no_salio_al_exchange_se_puede_reintentar(tmp_path):
+    """El 2026-08-22 tres ventas quedaron bloqueadas: el intento fallido se
+    guardaba y el guard de duplicados lo trataba como ya ejecutado, así que
+    la orden mala impedía su propio arreglo hasta el día siguiente."""
+    from pmbot.db import connect
+    from pmbot.execution.paper import Fill, PaperBroker
+    from pmbot.risk import OrderRequest, RiskManager
+
+    conn = connect(tmp_path / "r.db")
+    b = PaperBroker(conn, None,
+                    RiskManager(conn, {"min_order_usdc": 1.0}, tmp_path),
+                    {"paper_starting_usdc": 200.0})
+    req = OrderRequest(strategy="s", condition_id="0xc", category="crypto",
+                       token_id="t", outcome="Yes", outcome_index=0,
+                       side="SELL", size=2.93, price=0.35, reason="salir")
+    b._record("liberar:0xc:0", req, Fill("liberar:0xc:0", "REJECTED",
+                                         detail="tamaño < mínimo"))
+    assert _fila(conn, "liberar:0xc:0")["status"] == "REJECTED"
+
+    # el reintento entra y la fila queda con el resultado nuevo
+    b._record("liberar:0xc:0", req,
+              Fill("liberar:0xc:0", "FILLED", 2.93, 0.35, 1.03, sent=True))
+    fila = _fila(conn, "liberar:0xc:0")
+    assert fila["status"] == "FILLED" and fila["sent"] == 1
+    assert fila["reject_reason"] is None
+
+
+def test_una_orden_que_llego_al_exchange_no_se_pisa_jamas(tmp_path):
+    """La garantía que sostiene todo lo anterior: si la orden salió, repetirla
+    podría ejecutarla dos veces con dinero real."""
+    from pmbot.db import connect
+    from pmbot.execution.paper import Fill, PaperBroker
+    from pmbot.risk import OrderRequest, RiskManager
+
+    conn = connect(tmp_path / "r2.db")
+    b = PaperBroker(conn, None,
+                    RiskManager(conn, {"min_order_usdc": 1.0}, tmp_path),
+                    {"paper_starting_usdc": 200.0})
+    req = OrderRequest(strategy="s", condition_id="0xc", category="crypto",
+                       token_id="t", outcome="Yes", outcome_index=0,
+                       side="BUY", size=40.0, price=0.50, reason="entrar")
+    b._record("copy:0xw:0xc:0", req,
+              Fill("copy:0xw:0xc:0", "FILLED", 40.0, 0.50, 20.0, sent=True))
+    # un segundo registro con datos distintos NO debe alterar la fila
+    b._record("copy:0xw:0xc:0", req,
+              Fill("copy:0xw:0xc:0", "REJECTED", detail="lo que sea"))
+    fila = _fila(conn, "copy:0xw:0xc:0")
+    assert fila["status"] == "FILLED" and fila["fill_size"] == 40.0
+
+
+def test_un_rechazo_que_si_salio_al_exchange_tampoco_se_pisa(tmp_path):
+    """NO_LIQUIDITY llega al CLOB: pudo haber llenado parcialmente."""
+    from pmbot.db import connect
+    from pmbot.execution.paper import Fill, PaperBroker
+    from pmbot.risk import OrderRequest, RiskManager
+
+    conn = connect(tmp_path / "r3.db")
+    b = PaperBroker(conn, None,
+                    RiskManager(conn, {"min_order_usdc": 1.0}, tmp_path),
+                    {"paper_starting_usdc": 200.0})
+    req = OrderRequest(strategy="s", condition_id="0xc", category="crypto",
+                       token_id="t", outcome="Yes", outcome_index=0,
+                       side="BUY", size=40.0, price=0.50, reason="entrar")
+    b._record("x:1", req, Fill("x:1", "NO_LIQUIDITY", detail="sin book",
+                               sent=True))
+    b._record("x:1", req, Fill("x:1", "FILLED", 40.0, 0.50, 20.0, sent=True))
+    assert _fila(conn, "x:1")["status"] == "NO_LIQUIDITY"
