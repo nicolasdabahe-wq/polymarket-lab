@@ -53,11 +53,14 @@ def test_el_estado_del_portfolio_se_calcula(app):
 
 def test_los_limites_de_velocidad_llegan_del_config(app):
     """Política del dueño (2026-08-22): el dinero no se para más de tres
-    días, salvo oportunidad dorada."""
+    días, sin excepciones. Hubo una excepción por "oportunidad dorada" y se
+    eliminó porque no era lo que se había pedido: si vuelve a aparecer algo
+    que estire ese plazo, este test tiene que fallar."""
     limites = app.risk.limits
     assert limites.max_days_to_resolution == 3
-    assert limites.golden_edge == pytest.approx(0.15)
-    assert limites.golden_max_days == 10
+    assert not hasattr(limites, "golden_edge")
+    cripto = app.cfg.section("strategies")["crypto_value"]
+    assert cripto["max_days_to_resolution"] <= 3
 
 
 def test_no_queda_ningun_freno_por_perdidas(app):

@@ -40,12 +40,6 @@ class Limits:
     max_days_to_resolution: float = 3650.0   # tope duro por apuesta
     slow_days: float = 10.0                  # a partir de acá es "lenta"
     max_pct_slow: float = 1.0                # máx del equity en lentas
-    # Oportunidad dorada: la única excusa para atar el dinero más allá del
-    # tope. Se mide en retorno esperado por dólar apostado, así que es
-    # comparable entre estrategias (0.25 = esperamos ganar 25 centavos por
-    # dólar). Sin ventaja declarada no hay excepción que valga.
-    golden_edge: float = 999.0               # apagada por defecto
-    golden_max_days: float = 0.0             # días que compra una dorada
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -61,8 +55,6 @@ class Limits:
                 cfg.get("max_days_to_resolution", 3650)),
             slow_days=float(cfg.get("slow_days", 10)),
             max_pct_slow=float(cfg.get("max_pct_slow", 1.0)),
-            golden_edge=float(cfg.get("golden_edge", 999.0)),
-            golden_max_days=float(cfg.get("golden_max_days", 0.0)),
         )
 
 
@@ -85,10 +77,6 @@ class OrderRequest:
     # parado no compone: una apuesta a tres meses secuestra munición que
     # podría dar varias vueltas en ese tiempo.
     days_to_resolution: float | None = None
-    # Ventaja estimada: retorno esperado por dólar apostado (0.25 = esperamos
-    # ganar 25 centavos por dólar). Es lo único que puede comprar días de más
-    # cuando el mercado se resuelve lejos.
-    edge: float | None = None
 
     @property
     def cost(self) -> float:
@@ -151,16 +139,15 @@ def evaluate(order: OrderRequest, state: PortfolioState,
             return RiskDecision(
                 False, "mercado en limbo: su fecha venció hace "
                        f"{-dias:.0f} días y sigue sin resolverse")
+        # Tope duro y sin excepciones (decisión del dueño, 2026-08-22): el
+        # dinero no se ata más allá de este plazo por buena que parezca la
+        # apuesta. Hubo una excepción por "oportunidad dorada" y se eliminó
+        # porque no era lo que se había pedido.
         if dias > limits.max_days_to_resolution:
-            # Salvo que la ventaja sea tan grande que compense el encierro.
-            dorada = (order.edge is not None
-                      and order.edge >= limits.golden_edge
-                      and dias <= limits.golden_max_days)
-            if not dorada:
-                return RiskDecision(
-                    False, f"se resuelve en {dias:.0f} días (máx "
-                           f"{limits.max_days_to_resolution:.0f}): el dinero "
-                           f"quedaría parado demasiado tiempo")
+            return RiskDecision(
+                False, f"se resuelve en {dias:.0f} días (máx "
+                       f"{limits.max_days_to_resolution:.0f}): el dinero "
+                       f"quedaría parado demasiado tiempo")
         if dias >= limits.slow_days:
             tope = limits.max_pct_slow * equity
             if state.exposure_slow + cost > tope:

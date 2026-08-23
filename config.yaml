@@ -181,19 +181,6 @@ risk:
   # que mejor funciona. Calibrado con la cartera real del 2026-08-22.
   slow_days: 3
   max_pct_slow: 1.0            # sin techo: cartera abierta
-  # OPORTUNIDAD DORADA: la única excusa para pasar los tres días. Se mide en
-  # retorno esperado por dólar apostado, comparable entre estrategias, y cada
-  # una la calcula con su propio modelo: cripto y deportes con (probabilidad
-  # del modelo / precio del libro − 1), copia con el retorno esperado del
-  # backtest de esa wallet. 0.25 = esperamos ganar 25 centavos por dólar.
-  # Con menos que eso, el dinero se queda libre para dar más vueltas.
-  # Calibrado con los números del sábado 22: de las oportunidades que el bot
-  # encontró esa noche, una daba 16% y otra 29% — con el umbral en 0.25 solo
-  # pasaba una de cada dos. Bajado a 0.15 por decisión del dueño para ver más
-  # apuestas; sigue exigiendo una ventaja que la mayoría de los mercados no
-  # ofrece.
-  golden_edge: 0.15
-  golden_max_days: 10          # ni una dorada se ata más de diez días
   # Kill switch manual: crear el archivo var/KILL (o PMBOT_KILL=1) bloquea
   # toda compra nueva; las ventas siguen permitidas.
 
@@ -325,7 +312,7 @@ strategies:
     min_edge: 0.08            # el modelo debe discrepar >=8 puntos de prob.
     max_entry_price: 0.85
     min_days_to_resolution: 0.5
-    # Alineado con el techo de una oportunidad dorada: más allá de diez días
-    # el riesgo rechaza igual, así que escanear más lejos es trabajo perdido.
-    max_days_to_resolution: 10
+    # Alineado con el tope global: más allá de tres días el riesgo rechaza
+    # igual, así que escanear más lejos es trabajo perdido.
+    max_days_to_resolution: 3
     vol_lookback_days: 30
