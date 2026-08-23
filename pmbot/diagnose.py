@@ -34,24 +34,35 @@ async def diagnose() -> None:
     ult_sig = conn.execute(
         "SELECT MAX(created_at) t FROM signals WHERE source='smart_money'"
     ).fetchone()["t"]
+    # Un intento NO es una compra: la orden queda registrada aunque el
+    # riesgo la rechace o el CLOB la tumbe. Contarlas juntas hacía parecer
+    # que el bot operaba cuando en realidad se estaba estrellando.
     ult_ord = conn.execute(
-        "SELECT MAX(created_at) t FROM orders WHERE side='BUY'").fetchone()["t"]
+        "SELECT MAX(created_at) t FROM orders WHERE side='BUY' "
+        "AND status='FILLED'").fetchone()["t"]
     h2 = (ahora - timedelta(hours=2)).isoformat()
     sig_2h = conn.execute(
         "SELECT COUNT(*) c FROM signals WHERE source='smart_money' "
         "AND created_at >= ?", (h2,)).fetchone()["c"]
-    ord_2h = conn.execute(
+    llenas_2h = conn.execute(
+        "SELECT COUNT(*) c FROM orders WHERE side='BUY' AND status='FILLED' "
+        "AND created_at >= ?", (h2,)).fetchone()["c"]
+    intentos_2h = conn.execute(
         "SELECT COUNT(*) c FROM orders WHERE side='BUY' AND created_at >= ?",
         (h2,)).fetchone()["c"]
     print(f"\n0) LATIDO")
     print(f"   última señal vista : {_hace(ult_sig)}  ({sig_2h} en 2h)")
-    print(f"   última compra      : {_hace(ult_ord)}  ({ord_2h} en 2h)")
+    print(f"   última COMPRA REAL : {_hace(ult_ord)}  "
+          f"({llenas_2h} llenadas de {intentos_2h} intentos en 2h)")
     if sig_2h == 0:
         print("   ⚠️  NO llegan señales: el problema es de vigilancia "
               "(bot caído, API o wallets sin actividad), no de filtros.")
-    elif ord_2h == 0:
-        print("   → Llegan señales pero ninguna pasa los filtros. "
-              "El motivo exacto de cada descarte está en los logs.")
+    elif intentos_2h == 0:
+        print("   → Llegan señales pero ninguna llega a mandarse. "
+              "El motivo de cada descarte está en los logs ('no copio').")
+    elif llenas_2h == 0:
+        print("   ⚠️  Se INTENTA comprar y no entra ninguna: mirá los "
+              "motivos de rechazo de la sección 4.")
 
     scores = app.copy_trading._wallet_scores()
     thr = app.copy_trading._min_usdc_by_wallet()
@@ -110,8 +121,31 @@ async def diagnose() -> None:
     # riesgo
     st=app.broker.portfolio_state()
     print(f"\n4) CAPITAL: equity ${st.equity:.2f} | cash ${st.cash:.2f} | expuesto ${st.exposure_total:.2f}")
-    print(f"   tamaño por copia: ${st.equity*app.copy_trading.base_pct:.2f}")
-    print(f"   stop diario: equity inicio del día ${st.day_start_equity:.2f}")
+    ct = app.copy_trading
+    print(f"   tamaño por copia (Kelly): entre ${ct.min_trade_usdc:.2f} y "
+          f"${st.equity*ct.max_trade_pct:.2f}")
+    print(f"   stop diario: equity inicio del día ${st.day_start_equity:.2f}"
+          + (" ⛔ ACTIVADO" if st.day_start_equity > 0 and st.equity <=
+             st.day_start_equity * (1 - app.risk.limits.daily_stop_loss_pct)
+             else ""))
+
+    # Presupuesto por estrategia: el techo se mide contra el equity de HOY,
+    # así que cuando el equity baja el techo baja con él y una estrategia
+    # puede quedar por encima de su propio límite sin haber comprado nada.
+    # Ese caso bloquea todas sus compras hasta que sus posiciones cierren, y
+    # hasta ahora solo se veía como un rechazo suelto en los logs.
+    presupuestos = load_config().section("strategies") or {}
+    print("\n5) PRESUPUESTO POR ESTRATEGIA (techo = % del equity de hoy)")
+    for nombre, scfg in sorted(presupuestos.items()):
+        pct = float((scfg or {}).get("budget_pct", 0.0))
+        if pct <= 0:
+            continue
+        usado = st.exposure_by_strategy.get(nombre, 0.0)
+        techo = pct * st.equity
+        libre = techo - usado
+        marca = "⛔ SIN CUPO" if libre <= ct.min_trade_usdc else "✅"
+        print(f"   {marca} {nombre:<16} ${usado:6.2f} de ${techo:6.2f} "
+              f"({pct:.0%}) → libre ${libre:+7.2f}")
     ordenes=conn.execute("SELECT status, COUNT(*) c FROM orders GROUP BY status").fetchall()
     print(f"   órdenes por estado: {[(r['status'],r['c']) for r in ordenes]}")
     rech=conn.execute("SELECT reject_reason, COUNT(*) c FROM orders WHERE reject_reason IS NOT NULL GROUP BY reject_reason ORDER BY c DESC LIMIT 5").fetchall()
