@@ -148,8 +148,27 @@ async def diagnose() -> None:
               f"({pct:.0%}) → libre ${libre:+7.2f}")
     ordenes=conn.execute("SELECT status, COUNT(*) c FROM orders GROUP BY status").fetchall()
     print(f"   órdenes por estado: {[(r['status'],r['c']) for r in ordenes]}")
-    rech=conn.execute("SELECT reject_reason, COUNT(*) c FROM orders WHERE reject_reason IS NOT NULL GROUP BY reject_reason ORDER BY c DESC LIMIT 5").fetchall()
-    if rech: print(f"   motivos de rechazo: {[(r['reject_reason'][:40],r['c']) for r in rech]}")
+    # Los motivos van COMPLETOS: recortados a 40 caracteres escondían justo
+    # la parte que importa de los errores del CLOB (el status y el cuerpo),
+    # que es lo único que dice por qué no entró una orden.
+    rech = conn.execute(
+        """SELECT reject_reason, COUNT(*) c FROM orders
+           WHERE reject_reason IS NOT NULL
+           GROUP BY reject_reason ORDER BY c DESC LIMIT 8""").fetchall()
+    if rech:
+        print("\n6) POR QUÉ SE RECHAZARON LAS ÓRDENES (histórico)")
+        for r in rech:
+            print(f"   {r['c']:>3}x  {r['reject_reason']}")
+    ultimos = conn.execute(
+        """SELECT created_at, status, reject_reason, reason FROM orders
+           WHERE side = 'BUY' ORDER BY created_at DESC LIMIT 5""").fetchall()
+    if ultimos:
+        print("\n7) LOS 5 ÚLTIMOS INTENTOS DE COMPRA")
+        for r in ultimos:
+            marca = "✅" if r["status"] == "FILLED" else "❌"
+            print(f"   {marca} {_hace(r['created_at']):>14}  {r['status']}"
+                  + (f"  {r['reject_reason']}" if r["reject_reason"] else ""))
+            print(f"      {(r['reason'] or '')[:100]}")
     await app.aclose()
 
 if __name__ == "__main__":
