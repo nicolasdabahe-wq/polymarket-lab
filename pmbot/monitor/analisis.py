@@ -75,21 +75,18 @@ def posiciones_cerradas(conn: sqlite3.Connection,
 
     Se agrupa ANTES de sumar: si se cruzan compras con ventas fila a fila,
     dos de cada multiplican los montos por dos.
+
+    `desde` acota por la fecha del CIERRE, no la de la compra. Filtrando por
+    la compra —como se hacía hasta el 2026-08-25— una posición comprada el
+    lunes y cobrada el jueves no existía para `--dias 1`: de 33 cierres de
+    ese día se veían 2, y las 2 que sobrevivían eran las compradas y
+    cerradas en el mismo día, o sea las más rápidas. Es la misma trampa que
+    este módulo existe para evitar: una muestra elegida por un criterio que
+    correlaciona con el resultado. Los importes son siempre los totales de
+    la posición; la ventana decide QUÉ posiciones entran, nunca cuánto se
+    cuenta de cada una (si no, una compra partida por la mitad se contaría
+    a medias y el ROI saldría inventado).
     """
-    filtro = "AND o.created_at >= ?" if desde else ""
-    args = (desde,) if desde else ()
-    compras = {
-        (r["condition_id"], r["outcome"]): r for r in conn.execute(
-            f"""SELECT o.condition_id, o.outcome,
-                       MIN(o.strategy) strategy,
-                       COALESCE(MIN(m.category), 'other') category,
-                       COALESCE(MIN(m.question), '') pregunta,
-                       SUM(o.fill_usdc) usdc, SUM(o.fill_size) shares
-                FROM orders o
-                LEFT JOIN markets m ON m.condition_id = o.condition_id
-                WHERE o.side = 'BUY' AND o.status = 'FILLED'
-                      AND o.fill_size > 0 {filtro}
-                GROUP BY o.condition_id, o.outcome""", args)}
     cobros: dict[tuple[str, str], float] = {}
     for r in conn.execute(
             """SELECT condition_id, outcome, SUM(fill_usdc) usdc
@@ -98,6 +95,28 @@ def posiciones_cerradas(conn: sqlite3.Connection,
                GROUP BY condition_id, outcome"""):
         cobros[(r["condition_id"], r["outcome"])] = float(r["usdc"] or 0.0)
 
+    # Qué posiciones entran en la ventana: las que cerraron dentro de ella.
+    cerradas_en_ventana: set[tuple[str, str]] = set()
+    if desde is not None:
+        cerradas_en_ventana = {
+            (r["condition_id"], r["outcome"]) for r in conn.execute(
+                """SELECT DISTINCT condition_id, outcome FROM orders
+                   WHERE side IN ('SELL', 'REDEEM') AND status = 'FILLED'
+                         AND created_at >= ?""", (desde,))}
+
+    compras = {
+        (r["condition_id"], r["outcome"]): r for r in conn.execute(
+            """SELECT o.condition_id, o.outcome,
+                      MIN(o.strategy) strategy,
+                      COALESCE(MIN(m.category), 'other') category,
+                      COALESCE(MIN(m.question), '') pregunta,
+                      SUM(o.fill_usdc) usdc, SUM(o.fill_size) shares
+               FROM orders o
+               LEFT JOIN markets m ON m.condition_id = o.condition_id
+               WHERE o.side = 'BUY' AND o.status = 'FILLED'
+                     AND o.fill_size > 0
+               GROUP BY o.condition_id, o.outcome""")}
+
     # Una posición está cerrada si ya no queda nada de ella en cartera.
     vivas = {(r["condition_id"], r["outcome"]) for r in conn.execute(
         "SELECT condition_id, outcome FROM paper_positions WHERE size > 0.01")}
@@ -105,6 +124,8 @@ def posiciones_cerradas(conn: sqlite3.Connection,
     fuera: list[Cerrada] = []
     for clave, r in compras.items():
         if clave in vivas:
+            continue
+        if desde is not None and clave not in cerradas_en_ventana:
             continue
         c = Cerrada(condition_id=clave[0], outcome=clave[1],
                     strategy=r["strategy"] or "?",

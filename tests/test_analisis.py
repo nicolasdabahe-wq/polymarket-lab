@@ -246,3 +246,80 @@ def test_asimetria_sin_cierres_no_revienta():
     a = asimetria([])
     assert a.aciertos == 0.0 and a.precio_medio == 0.0
     assert a.diagnostico == "sin cierres que juzgar"
+
+
+# --- La ventana --dias tiene que mirar el CIERRE, no la compra -------------
+
+def test_ventana_incluye_lo_comprado_antes_y_cerrado_dentro(tmp_path):
+    """El fallo del 2026-08-25: `--dias 1` filtraba por la fecha de COMPRA,
+    así que una posición comprada el lunes y cobrada hoy no existía. De 33
+    cierres de ese día se vieron 2 — y las 2 supervivientes eran las
+    compradas y cerradas el mismo día, es decir las más rápidas. Elegir la
+    muestra por un criterio que correlaciona con el resultado es justo lo
+    que este módulo existe para impedir."""
+    from pmbot.db import connect
+    from pmbot.monitor.analisis import posiciones_cerradas
+
+    conn = connect(tmp_path / "ventana.db")
+    with conn:
+        conn.execute(
+            """INSERT INTO markets (condition_id, question, category,
+               updated_at) VALUES ('0xvieja','¿Gana?','sports','x')""")
+        # Comprada hace tres días, cobrada hoy: la que se perdía.
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('b1','copy_trading','0xvieja','Yes','BUY',100,'FILLED',
+                       100, 50.0, '2026-08-22T10:00:00')""")
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('r1','copy_trading','0xvieja','Yes','REDEEM',100,
+                       'FILLED', 100, 100.0, '2026-08-25T10:00:00')""")
+        # Comprada y cerrada ANTES de la ventana: no debe aparecer.
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('b2','copy_trading','0xantigua','Yes','BUY',10,'FILLED',
+                       10, 5.0, '2026-08-20T10:00:00')""")
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('r2','copy_trading','0xantigua','Yes','REDEEM',10,
+                       'FILLED', 10, 0.0, '2026-08-21T10:00:00')""")
+
+    dentro = posiciones_cerradas(conn, "2026-08-25T00:00:00")
+    assert [c.condition_id for c in dentro] == ["0xvieja"]
+    # El importe es el TOTAL de la posición, no el trozo dentro de la ventana.
+    assert dentro[0].invertido == 50.0 and dentro[0].cobrado == 100.0
+    assert dentro[0].pnl == 50.0
+
+    # Sin ventana salen las dos.
+    assert len(posiciones_cerradas(conn, None)) == 2
+
+
+def test_ventana_no_parte_una_compra_en_dos(tmp_path):
+    """Los importes son totales de la posición. Si la ventana recortara
+    también los montos, una compra hecha en dos tandas contaría a medias y
+    el ROI saldría inventado."""
+    from pmbot.db import connect
+    from pmbot.monitor.analisis import posiciones_cerradas
+
+    conn = connect(tmp_path / "partida.db")
+    with conn:
+        for oid, dia, usdc in [("b1", "2026-08-20T10:00:00", 30.0),
+                               ("b2", "2026-08-25T09:00:00", 20.0)]:
+            conn.execute(
+                """INSERT INTO orders (id, strategy, condition_id, outcome,
+                   side, req_size, status, fill_size, fill_usdc, created_at)
+                   VALUES (?,'copy_trading','0xm','Yes','BUY',50,'FILLED',
+                           50, ?, ?)""", (oid, usdc, dia))
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('r','copy_trading','0xm','Yes','REDEEM',100,'FILLED',
+                       100, 0.0, '2026-08-25T20:00:00')""")
+
+    c = posiciones_cerradas(conn, "2026-08-25T00:00:00")[0]
+    assert c.invertido == 50.0          # las dos tandas, no solo la de hoy
+    assert c.pnl == -50.0               # perderlo todo, no "perder 20"
