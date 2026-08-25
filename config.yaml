@@ -179,6 +179,14 @@ risk:
   # es mala racha. El freno del 2026-08-22 nunca llegó a actuar porque estos
   # mercados se clasificaban como 'sports' (ya corregido en gamma.py).
   categorias_vetadas: [esports]
+  # PISO DE PRECIO. De las cinco franjas de entrada, la de los tapados es la
+  # única catastrófica: por debajo de 0.35 el bot cerró 8 posiciones, acertó
+  # 1 (12%) y perdió $71.95 de los $114.22 que puso — un -63%. La franja
+  # 0.35-0.50 es, de hecho, la única que gana (+8.1%). Comprar a 0.16 es
+  # pagar por un billete de lotería que el mercado ya sobrevalora.
+  # El arbitraje queda exento: ahí el precio no manda, manda la suma.
+  min_precio_entrada: 0.35
+  estrategias_sin_piso: [arbitrage, ladder_arb]
   # Freno total: también apagado por orden del dueño (2026-08-22), advertido
   # de que sin él nada detiene al bot mientras nadie mira.
   max_drawdown_pct: 1.0

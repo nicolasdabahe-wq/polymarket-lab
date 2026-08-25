@@ -437,3 +437,41 @@ def test_vender_lo_vetado_siempre_se_permite():
     """De una posición vetada hay que poder salir."""
     assert evaluate(order(category="esports", side="SELL", size=40.0,
                           price=0.30), state(cash=200.0), LIMITS_VETO).approved
+
+
+# --- piso de precio (evidencia del 2026-08-25) ---
+
+LIMITS_PISO = Limits(
+    max_pct_per_market=1.0, max_pct_per_category=1.0,
+    max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+    daily_stop_loss_pct=1.0, min_order_usdc=10.0, max_drawdown_pct=1.0,
+    max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0,
+    min_precio_entrada=0.35,
+    estrategias_sin_piso=frozenset({"arbitrage", "ladder_arb"}))
+
+
+def test_no_se_compran_tapados():
+    """Por debajo de 0.35: 8 posiciones cerradas, 1 acierto, -63% de ROI.
+    El caso concreto fue las Sparks a 0.16."""
+    d = evaluate(order(size=178.0, price=0.16, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PISO)
+    assert not d.approved and "tapado" in d.reason
+
+
+def test_la_franja_que_gana_si_pasa():
+    """0.35-0.50 es la única franja rentable del historial (+8.1%)."""
+    assert evaluate(order(size=60.0, price=0.42, days_to_resolution=1),
+                    state(cash=200.0), LIMITS_PISO).approved
+
+
+def test_el_arbitraje_no_tiene_piso():
+    """En un arbitraje el precio suelto no dice nada: lo que manda es que
+    los dos lados juntos cuesten menos de lo que pagan."""
+    assert evaluate(order(strategy="ladder_arb", size=178.0, price=0.16,
+                          days_to_resolution=0), state(cash=200.0),
+                    LIMITS_PISO).approved
+
+
+def test_el_piso_apagado_no_estorba():
+    assert evaluate(order(size=178.0, price=0.16, days_to_resolution=1),
+                    state(cash=200.0), LIMITS_TRES).approved

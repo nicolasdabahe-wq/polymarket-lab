@@ -24,6 +24,7 @@ Todo puro salvo `posiciones_cerradas`, que solo lee.
 from __future__ import annotations
 
 import sqlite3
+import re
 from dataclasses import dataclass
 
 
@@ -82,6 +83,7 @@ def posiciones_cerradas(conn: sqlite3.Connection,
             f"""SELECT o.condition_id, o.outcome,
                        MIN(o.strategy) strategy,
                        COALESCE(MIN(m.category), 'other') category,
+                       COALESCE(MIN(m.question), '') pregunta,
                        SUM(o.fill_usdc) usdc, SUM(o.fill_size) shares
                 FROM orders o
                 LEFT JOIN markets m ON m.condition_id = o.condition_id
@@ -106,12 +108,30 @@ def posiciones_cerradas(conn: sqlite3.Connection,
             continue
         c = Cerrada(condition_id=clave[0], outcome=clave[1],
                     strategy=r["strategy"] or "?",
-                    category=(r["category"] or "other"),
+                    category=categoria_real(r["category"],
+                                             r["pregunta"]),
                     invertido=float(r["usdc"] or 0.0),
                     cobrado=cobros.get(clave, 0.0),
                     acciones=float(r["shares"] or 0.0))
         fuera.append(c)
     return fuera
+
+
+# Los mercados ya resueltos conservan en la tabla la categoría que tenían
+# cuando se cachearon, así que los esports anteriores al arreglo del
+# clasificador siguen figurando como 'sports' y contaminan sus números. El
+# texto de la pregunta no cambia nunca: es la fuente fiable para lo viejo.
+_ESPORTS = re.compile(
+    r"\blol:|\bcounter-strike|\bvalorant|\besports?\b|\bdota|\bcs2\b|"
+    r"\boverwatch|\bmap handicap|\bstarcraft|\brainbow six",
+    re.IGNORECASE)
+
+
+def categoria_real(categoria: str, pregunta: str) -> str:
+    """Categoría de una posición, corrigiendo la que quedó vieja en la tabla."""
+    if _ESPORTS.search(pregunta or ""):
+        return "esports"
+    return categoria or "other"
 
 
 @dataclass(frozen=True)

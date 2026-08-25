@@ -50,6 +50,14 @@ class Limits:
     # Categorías vetadas: no se compra nada de ellas, venga de la estrategia
     # que venga. Se veta con evidencia, no por prejuicio.
     categorias_vetadas: frozenset[str] = frozenset()
+    # Piso de precio de entrada. Comprar muy barato es comprar un billete de
+    # lotería: el mercado dice 20% y hay que acertar 20 de cada 100 solo para
+    # empatar. En los mercados de apuestas los favoritos están
+    # sistemáticamente infravalorados y los tapados sobrevalorados, y aquí se
+    # cumplió: por debajo de 0.35 el bot acertó el 12% y perdió el 63% de lo
+    # que puso ahí. El arbitraje queda exento porque no depende del precio.
+    min_precio_entrada: float = 0.0
+    estrategias_sin_piso: frozenset[str] = frozenset()
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -69,6 +77,10 @@ class Limits:
             categorias_vetadas=frozenset(
                 str(c).strip().lower()
                 for c in (cfg.get("categorias_vetadas") or [])),
+            min_precio_entrada=float(cfg.get("min_precio_entrada", 0.0)),
+            estrategias_sin_piso=frozenset(
+                str(e).strip().lower()
+                for e in (cfg.get("estrategias_sin_piso") or [])),
         )
 
 
@@ -149,6 +161,14 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                             f"${limits.min_order_usdc:.2f})")
     if cost > state.cash:
         return RiskDecision(False, f"cash insuficiente (${state.cash:.2f})")
+
+    if (limits.min_precio_entrada > 0
+            and order.strategy.lower() not in limits.estrategias_sin_piso
+            and 0 < order.price < limits.min_precio_entrada):
+        return RiskDecision(
+            False, f"tapado a {order.price:.2f}: por debajo de "
+                   f"{limits.min_precio_entrada:.2f} el mercado le da menos "
+                   f"de esa probabilidad y hay que acertar igual")
 
     # Premio en juego: lo que se cobraría de más si la apuesta gana.
     if limits.min_ganancia_usdc > 0 and order.price > 0:

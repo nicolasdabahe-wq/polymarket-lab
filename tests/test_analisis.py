@@ -138,3 +138,34 @@ def test_agrupa_por_precio_con_el_precio_medio_real(tmp_path):
 
 def test_el_formato_no_revienta_sin_datos():
     assert "TOTAL" not in formatear([], "vacío")
+
+
+def test_los_esports_viejos_no_se_cuentan_como_deportes(tmp_path):
+    """Un mercado ya resuelto conserva la categoría que tenía al cachearse,
+    así que los esports anteriores al arreglo del clasificador figuraban
+    como 'sports' e inflaban sus pérdidas. El texto de la pregunta no
+    cambia nunca."""
+    conn = _db(tmp_path)
+    with conn:
+        conn.execute(
+            """INSERT INTO markets (condition_id, gamma_id, slug, question,
+               category, active, updated_at)
+               VALUES ('0xlol','1','s','LoL: Disguised vs Dignitas - Game 1',
+                       'sports', 0, '2026-08-24')""")
+        conn.execute(
+            """INSERT INTO orders (id, strategy, condition_id, outcome, side,
+               req_size, status, fill_size, fill_usdc, created_at)
+               VALUES ('o1','copy_trading','0xlol','Dignitas','BUY',38.0,
+                       'FILLED',38.0,19.84,'2026-08-22')""")
+    [c] = posiciones_cerradas(conn)
+    assert c.category == "esports", f"quedó como '{c.category}'"
+
+
+def test_un_deporte_de_verdad_sigue_siendo_deporte(tmp_path):
+    conn = _db(tmp_path)
+    _orden(conn, "o1", "0xmlb", "Over", "BUY", 25.0, 50.0, category="sports")
+    with conn:
+        conn.execute("UPDATE markets SET question = ? WHERE condition_id = ?",
+                     ("Cincinnati Reds vs. San Francisco Giants: O/U", "0xmlb"))
+    [c] = posiciones_cerradas(conn)
+    assert c.category == "sports"
