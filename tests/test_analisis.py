@@ -182,3 +182,67 @@ def test_el_cruce_de_categoria_y_precio_separa_ambas_cosas(tmp_path):
               agrupar(posiciones_cerradas(conn), "categoria+precio")}
     assert any(k.startswith("crypto") and "carisimo" in k for k in grupos), grupos.keys()
     assert any(k.startswith("sports") and "medio" in k for k in grupos), grupos.keys()
+
+
+# --- Ganar más veces de las que se pierde y aun así perder dinero -----------
+
+def _cerrada(invertido, cobrado, acciones, strategy="copy_trading"):
+    from pmbot.monitor.analisis import Cerrada
+    return Cerrada(condition_id=f"0x{invertido}{cobrado}{acciones}",
+                   outcome="Yes", strategy=strategy, category="sports",
+                   invertido=invertido, cobrado=cobrado, acciones=acciones)
+
+
+def test_asimetria_detecta_cobrar_poco_y_pagar_entero():
+    """El caso real del 2026-08-25: copy_trading acertó el 58% y perdió
+    $86.58. No es contradicción — las ganadoras se cerraban por centavos y
+    las perdedoras costaban la posición entera. Sin este corte la conclusión
+    natural es culpar a las wallets copiadas, que eligieron bien."""
+    from pmbot.monitor.analisis import asimetria
+
+    # 6 ganadoras de +$0.50, 4 perdedoras de -$10. Acierto 60%, entrada 0.50.
+    cerradas = ([_cerrada(10.0, 10.5, 20.0)] * 6
+                + [_cerrada(10.0, 0.0, 20.0)] * 4)
+    a = asimetria(cerradas)
+
+    assert a.ganadoras == 6 and a.perdedoras == 4
+    assert a.aciertos == 0.6
+    assert round(a.precio_medio, 3) == 0.5
+    assert round(a.esperado_por_accion, 3) == 0.1     # w - p, sería rentable
+    assert round(a.media_ganadora, 2) == 0.50
+    assert round(a.media_perdedora, 2) == 10.00
+    assert "se cobran las buenas de a poco" in a.diagnostico
+
+
+def test_asimetria_culpa_a_la_entrada_cuando_el_precio_es_alto():
+    """Si el precio medio supera al acierto, pierde aunque se aguante hasta
+    el final. Ahí el problema es comprar caro, no vender pronto — y decir lo
+    contrario mandaría a tocar la parte equivocada del bot."""
+    from pmbot.monitor.analisis import asimetria
+
+    # 6 de 10 aciertos comprando a 0.80: 0.60 - 0.80 = -0.20 por acción.
+    cerradas = ([_cerrada(8.0, 10.0, 10.0)] * 6
+                + [_cerrada(8.0, 0.0, 10.0)] * 4)
+    a = asimetria(cerradas)
+
+    assert round(a.precio_medio, 2) == 0.80
+    assert a.esperado_por_accion < 0
+    assert "el problema es la entrada" in a.diagnostico
+
+
+def test_asimetria_sana_no_inventa_problemas():
+    from pmbot.monitor.analisis import asimetria
+
+    cerradas = ([_cerrada(5.0, 10.0, 10.0)] * 6
+                + [_cerrada(5.0, 0.0, 10.0)] * 4)
+    a = asimetria(cerradas)
+    assert round(a.precio_medio, 2) == 0.50 and a.aciertos == 0.6
+    assert "sano" in a.diagnostico
+
+
+def test_asimetria_sin_cierres_no_revienta():
+    from pmbot.monitor.analisis import asimetria
+
+    a = asimetria([])
+    assert a.aciertos == 0.0 and a.precio_medio == 0.0
+    assert a.diagnostico == "sin cierres que juzgar"

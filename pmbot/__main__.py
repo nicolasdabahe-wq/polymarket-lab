@@ -418,8 +418,8 @@ def cmd_analisis(app: App, dias: int | None = None) -> None:
     """
     from datetime import datetime, timedelta, timezone
 
-    from .monitor.analisis import (agrupar, formatear, posiciones_cerradas,
-                                   revisar)
+    from .monitor.analisis import (agrupar, asimetria, formatear,
+                                   posiciones_cerradas, revisar)
 
     desde = None
     if dias:
@@ -447,6 +447,16 @@ def cmd_analisis(app: App, dias: int | None = None) -> None:
                         ("categoria+precio", "CATEGORÍA × PRECIO "
                          "(¿el problema es la categoría o el precio?)")):
         print(formatear(agrupar(cerradas, por), titulo))
+
+    # El acierto no dice el tamaño del acierto: sin esto, "gana 58% y pierde
+    # $86" parece una contradicción y se culpa a quien no es.
+    for estrategia in sorted({c.strategy for c in cerradas}):
+        a = asimetria([c for c in cerradas if c.strategy == estrategia])
+        print(f"\n⚖️  {estrategia}: {a.ganadoras} ganadas / "
+              f"{a.perdedoras} perdidas — ganadora media "
+              f"${a.media_ganadora:.2f}, perdedora media "
+              f"${a.media_perdedora:.2f}")
+        print(f"   {a.diagnostico}")
     print("\n(cerradas = ya resueltas o vendidas; las abiertas no cuentan)")
 
 

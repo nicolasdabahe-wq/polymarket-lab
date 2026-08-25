@@ -205,3 +205,75 @@ def formatear(grupos: list[Grupo], titulo: str) -> str:
         lineas.append(f"{'TOTAL':<28} {tn:>9} {tg/tn if tn else 0:>7.0%} "
                       f"{ti:>10.2f} {tp:>+9.2f} {roi:>7.1%}")
     return "\n".join(lineas)
+
+
+@dataclass(frozen=True)
+class Asimetria:
+    """Por qué un porcentaje de acierto alto puede perder dinero."""
+    ganadoras: int
+    perdedoras: int
+    media_ganadora: float     # USDC que deja una ganadora, en promedio
+    media_perdedora: float    # USDC que cuesta una perdedora (positivo)
+    precio_medio: float       # precio de entrada medio, ponderado por acciones
+
+    @property
+    def aciertos(self) -> float:
+        total = self.ganadoras + self.perdedoras
+        return self.ganadoras / total if total else 0.0
+
+    @property
+    def esperado_por_accion(self) -> float:
+        """Lo que debería dejar cada acción si se aguantara hasta el final.
+
+        Comprando a `p` y aguantando, una acción cobra $1 o $0, así que el
+        valor esperado es exactamente `aciertos - p`. Es una identidad, no
+        una estimación: (w)(1-p) - (1-w)(p) = w - p.
+        """
+        return self.aciertos - self.precio_medio
+
+    @property
+    def diagnostico(self) -> str:
+        if not self.ganadoras and not self.perdedoras:
+            return "sin cierres que juzgar"
+        if self.esperado_por_accion > 0 and (
+                self.media_ganadora * self.ganadoras
+                < self.media_perdedora * self.perdedoras):
+            return (
+                f"aciertas {self.aciertos:.0%} comprando a {self.precio_medio:.2f}: "
+                f"aguantando hasta el final eso deja "
+                f"{self.esperado_por_accion:+.2f} por acción y sería rentable. "
+                f"Pierde dinero porque la ganadora media deja "
+                f"${self.media_ganadora:.2f} y la perdedora media cuesta "
+                f"${self.media_perdedora:.2f}: se cobran las buenas de "
+                f"a poco y se pagan las malas enteras.")
+        if self.esperado_por_accion <= 0:
+            return (
+                f"aciertas {self.aciertos:.0%} pero compras a "
+                f"{self.precio_medio:.2f} de media: por encima de tu propio "
+                f"acierto. A ese precio pierde aunque se aguante hasta el "
+                f"final — el problema es la entrada, no la salida.")
+        return (f"aciertas {self.aciertos:.0%} comprando a "
+                f"{self.precio_medio:.2f}: sano.")
+
+
+def asimetria(cerradas: list[Cerrada]) -> Asimetria:
+    """Ganadora media contra perdedora media.
+
+    Existe porque "gana 58% de las veces" y "pierde $86 en un día" parecen
+    contradecirse y no lo son: el porcentaje de acierto no dice nada del
+    TAMAÑO de cada acierto. Sin este corte, la conclusión natural — y falsa —
+    es que las wallets copiadas eligen mal.
+    """
+    ganan = [c for c in cerradas if c.gano]
+    pierden = [c for c in cerradas if not c.gano]
+    acciones = sum(c.acciones for c in cerradas)
+    return Asimetria(
+        ganadoras=len(ganan),
+        perdedoras=len(pierden),
+        media_ganadora=(sum(c.pnl for c in ganan) / len(ganan)
+                        if ganan else 0.0),
+        media_perdedora=(-sum(c.pnl for c in pierden) / len(pierden)
+                         if pierden else 0.0),
+        precio_medio=(sum(c.invertido for c in cerradas) / acciones
+                      if acciones > 0 else 0.0),
+    )
