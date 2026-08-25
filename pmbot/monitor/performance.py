@@ -151,3 +151,48 @@ def formatear(lineas: list[Linea], titulo: str,
                      f"(real {l.realizado:+.2f} / flot {l.no_realizado:+.2f}"
                      f"; {l.trades} cierres{wr}{abiertas})")
     return "\n".join(filas)
+
+
+def extremos(lineas: list[Linea],
+             n: int = 4) -> tuple[list[Linea], list[Linea], int]:
+    """Las n mejores y las n peores, más cuántas quedan sin mostrar.
+
+    Recortar por arriba y ya (`lineas[:6]`) enseñaba SOLO ganadoras: el
+    2026-08-25, con copy_trading en -$228.04 sobre 72 cierres, el reporte
+    diario mostró seis wallets con 100% de acierto y +$74.33 entre todas.
+    Las 66 restantes, que sumaban -$302.37, no aparecían. Un resumen que
+    solo puede dar buenas noticias no es un resumen.
+
+    `lineas` debe venir ordenada de mejor a peor (así la deja resumen_*).
+    """
+    if len(lineas) <= 2 * n:
+        return lineas, [], 0
+    return lineas[:n], lineas[-n:], len(lineas) - 2 * n
+
+
+def movimientos_del_dia(conn: sqlite3.Connection, dia: str) -> list[str]:
+    """Lo que de verdad se operó hoy, leído de la base.
+
+    El reporte listaba solo los movimientos devueltos por SU PROPIA corrida,
+    así que todo lo que llenaba el ciclo intradía quedaba invisible: la
+    consulta a `orders` ya existía, pero solo servía para decidir si imprimir
+    "hoy no se opera" y sus filas se tiraban. El resultado era una sección
+    "Movimientos de hoy" en blanco en días con operaciones — ni la lista ni
+    el aviso de que no hubo ninguna.
+    """
+    filas = []
+    for r in conn.execute(
+            """SELECT o.strategy, o.side, o.outcome, o.fill_size, o.fill_price,
+                      o.fill_usdc, o.realized_pnl, m.question
+               FROM orders o
+               LEFT JOIN markets m ON m.condition_id = o.condition_id
+               WHERE date(o.created_at) = ? AND o.status = 'FILLED'
+               ORDER BY o.created_at""", (dia,)):
+        pnl = (f" PnL {r['realized_pnl']:+.2f}"
+               if r["realized_pnl"] is not None else "")
+        filas.append(
+            f"  [{r['strategy']}] {r['side']} {r['fill_size'] or 0:.0f} u "
+            f"{r['outcome'] or ''} @ {r['fill_price'] or 0:.3f} "
+            f"(${r['fill_usdc'] or 0:.2f}){pnl}  "
+            f"{(r['question'] or r['strategy'])[:50]}")
+    return filas

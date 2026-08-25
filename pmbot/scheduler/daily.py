@@ -214,7 +214,8 @@ class DailyRoutine:
             f"💰 Equity: ${state.equity:.2f} (cash ${state.cash:.2f} + "
             f"posiciones ${state.exposure_total:.2f}) | "
             f"PnL total {total_pnl:+.2f} ({total_pnl / starting:+.1%})")
-        from ..monitor.performance import (formatear, nombre_wallet,
+        from ..monitor.performance import (extremos, formatear,
+                                           movimientos_del_dia, nombre_wallet,
                                            resumen_estrategias,
                                            resumen_wallets)
         posiciones = self.app.broker.positions()
@@ -224,23 +225,35 @@ class DailyRoutine:
             "🧮 PnL por estrategia (desde el inicio):"))
         top_wallets = resumen_wallets(conn, posiciones, marca)
         if top_wallets:
+            mejores, peores, ocultas = extremos(top_wallets)
+            nombre = lambda w: nombre_wallet(conn, w)  # noqa: E731
             lines.append("")
             lines.append(formatear(
-                top_wallets[:6], "👛 PnL por wallet copiada:",
-                nombres=lambda w: nombre_wallet(conn, w)))
+                mejores, "👛 PnL por wallet copiada (las que más suman):",
+                nombres=nombre))
+            if peores:
+                lines.append("")
+                lines.append(formatear(
+                    peores, f"👎 Las que más restan ({ocultas} en medio):",
+                    nombres=nombre))
         lines.append("")
 
+        # La base manda: `moves` son solo las de ESTA corrida y dejaba fuera
+        # todo lo que llenó el ciclo intradía. Las reconciliaciones sí van
+        # aparte porque no escriben en `orders` (arreglan paper_positions).
         lines.append("🔁 Movimientos de hoy:")
-        any_move = False
-        for kind, items in moves.items():
-            for item in items:
-                any_move = True
-                lines.append(f"  [{kind}] {item}")
-        todays_orders = conn.execute(
-            """SELECT * FROM orders WHERE date(created_at)=? AND status='FILLED'
-               ORDER BY created_at""", (today,)).fetchall()
-        if not any_move and not todays_orders:
-            lines.append("  (sin oportunidades que superen los umbrales: hoy no se opera)")
+        llenadas = movimientos_del_dia(conn, today)
+        if llenadas:
+            lines.extend(llenadas)
+        else:
+            lines.append("  (sin oportunidades que superen los umbrales: "
+                         "hoy no se opera)")
+        ajustes = [f"  [{k}] {i}" for k in ("reconciliadas",)
+                   for i in moves.get(k) or []]
+        if ajustes:
+            lines.append("")
+            lines.append("🔧 Ajustes de cartera (no son apuestas nuevas):")
+            lines.extend(ajustes)
         lines.append("")
 
         open_positions = self.app.broker.positions()
