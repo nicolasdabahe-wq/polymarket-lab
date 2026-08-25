@@ -157,6 +157,7 @@ class PaperBroker:
         by_wallet: dict[str, float] = {}
         by_strategy: dict[str, float] = {}
         held: dict[str, dict[int, float]] = {}
+        acciones: dict[str, dict[int, float]] = {}
         lentas = self._condiciones_lentas()
         exposure_slow = 0.0
         positions_value = 0.0
@@ -168,6 +169,8 @@ class PaperBroker:
                 exposure_slow += value
             held.setdefault(p["condition_id"], {})[p["outcome_index"] or 0] = \
                 float(p["avg_price"])
+            acciones.setdefault(p["condition_id"], {})[
+                p["outcome_index"] or 0] = float(p["size"])
             by_market[p["condition_id"]] = by_market.get(p["condition_id"], 0) + value
             by_category[p["category"] or "other"] = \
                 by_category.get(p["category"] or "other", 0) + value
@@ -185,6 +188,7 @@ class PaperBroker:
             exposure_by_market=by_market, exposure_by_category=by_category,
             exposure_by_wallet=by_wallet, exposure_by_strategy=by_strategy,
             held_outcomes=held, exposure_slow=exposure_slow,
+            held_shares=acciones,
         )
 
     def equity(self) -> float:

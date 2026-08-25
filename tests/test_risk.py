@@ -123,19 +123,49 @@ def test_min_order_floor_ten_dollars():
 # --- los dos lados del mismo evento (casos reales del 2026-08-22) ---
 
 def test_no_pagar_mas_de_un_dolar_entre_los_dos_lados():
-    """Musetti: compró Musetti a 0.50 y después Tiafoe a 0.69. El par cuesta
-    1.19 y solo paga 1.00: pierde gane quien gane."""
-    s = state(held_outcomes={"0xm1": {0: 0.50}})
-    d = evaluate(order(outcome_index=1, outcome="No", price=0.69), s, LIMITS)
-    assert not d.approved and "el par cuesta" in d.reason
+    """Musetti: compró 20 de Musetti a 0.50 ($10) y después 20 de Tiafoe a
+    0.69 ($13.80). Pone $23.80 y gane quien gane cobra 20: pierde siempre."""
+    s = state(held_outcomes={"0xm1": {0: 0.50}},
+              held_shares={"0xm1": {0: 20.0}})
+    d = evaluate(order(outcome_index=1, outcome="No", size=20.0, price=0.69),
+                 s, LIMITS)
+    assert not d.approved and "No es arbitraje" in d.reason
 
 
 def test_el_otro_lado_si_asegura_ganancia_pasa():
-    # Musetti a 0.50 y el rival se desploma a 0.25: el par cuesta 0.75 y
-    # paga 1.00 gane quien gane. Eso hay que dejarlo entrar.
-    s = state(held_outcomes={"0xm1": {0: 0.50}})
-    assert evaluate(order(outcome_index=1, outcome="No", price=0.25),
-                    s, LIMITS).approved
+    """Musetti a 0.50 y el rival se desploma a 0.25: 20 acciones de cada
+    lado cuestan $15 en total y cobran $20 gane quien gane."""
+    s = state(held_outcomes={"0xm1": {0: 0.50}},
+              held_shares={"0xm1": {0: 20.0}})
+    assert evaluate(order(outcome_index=1, outcome="No", size=20.0,
+                          price=0.25), s, LIMITS).approved
+
+
+def test_el_par_desigual_no_es_arbitraje_aunque_los_precios_sumen_menos_de_uno():
+    """El caso real del 2026-08-24, Atlanta Dream vs Los Angeles Sparks.
+
+    La regla vieja solo sumaba precios: 0.80 + 0.16 = 0.96 < 1, luego "es
+    arbitraje, adelante". Pero eran 28.3 acciones de un lado y 171.1 del
+    otro. Se pusieron $49.99 entre los dos lados y si Atlanta ganaba
+    ajustado se cobraban $28.27: -$21.72 asegurados en esa rama.
+    """
+    s = state(cash=400.0, held_outcomes={"0xatl": {0: 0.80}},
+              held_shares={"0xatl": {0: 28.3}})
+    d = evaluate(order(condition_id="0xatl", outcome_index=1,
+                       outcome="Los Angeles Sparks", size=171.1, price=0.16),
+                 s, LIMITS)
+    assert not d.approved and "No es arbitraje" in d.reason
+
+
+def test_el_par_desigual_pasa_si_aun_asi_asegura_ganancia():
+    """Desiguales no significa malo: lo que manda es si el lado más chico
+    cubre lo gastado. 60 acciones a 0.20 ($12) contra 100 ya compradas a
+    0.30 ($30): se ponen $42 y en el peor caso se cobran 60."""
+    s = state(cash=400.0, held_outcomes={"0xm2": {0: 0.30}},
+              held_shares={"0xm2": {0: 100.0}})
+    d = evaluate(order(condition_id="0xm2", outcome_index=1, outcome="No",
+                       size=60.0, price=0.20), s, LIMITS)
+    assert d.approved, d.reason
 
 
 def test_recargar_el_mismo_lado_esta_permitido():

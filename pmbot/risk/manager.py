@@ -114,6 +114,10 @@ class PortfolioState:
     held_outcomes: dict[str, dict[int, float]] = field(default_factory=dict)
     # Valor invertido en mercados que tardan en resolverse.
     exposure_slow: float = 0.0
+    # Acciones que tenemos de cada outcome: {condition_id: {idx: shares}}.
+    # Hace falta para saber si comprar el otro lado es de verdad un
+    # arbitraje: eso depende de las CANTIDADES, no solo de los precios.
+    held_shares: dict[str, dict[int, float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -182,21 +186,33 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                            f"lentos y esta suma ${cost:.2f}: pasa el "
                            f"{limits.max_pct_slow:.0%} del capital")
 
-    # Los dos lados del mismo evento solo si JUNTOS cuestan menos de $1.
-    # Comprar Musetti a 0.50 y Tiafoe a 0.69 es pagar 1.19 por algo que paga
-    # 1.00: se pierde gane quien gane. Pero si el rival se desploma a 0.25,
-    # el par asegura ganancia y hay que dejarlo pasar.
-    # Recargar el MISMO lado no se toca: es convicción, no contradicción.
-    opuestos = [p for idx, p in
-                (state.held_outcomes.get(order.condition_id) or {}).items()
-                if idx != order.outcome_index]
+    # Comprar el OTRO lado del mismo evento solo si el resultado es un
+    # arbitraje de verdad. Recargar el MISMO lado no se toca: es convicción.
+    #
+    # Un arbitraje exige comparar CANTIDADES, no precios. La versión vieja
+    # solo sumaba precios (0.80 + 0.16 = 0.96 < 1) y daba por bueno el par,
+    # pero con 28 acciones de un lado y 171 del otro no hay nada asegurado:
+    # el 2026-08-24 así quedaron $76.67 repartidos entre Atlanta Dream y
+    # Los Angeles Sparks, con -$48.39 si Atlanta ganaba ajustado.
+    #
+    # Gane quien gane cobramos el lado ganador entero, así que lo peor que
+    # puede pasar es cobrar el lado con MENOS acciones. Si ni eso cubre lo
+    # que pusimos, no es arbitraje: es una apuesta contra nosotros mismos.
+    precios = state.held_outcomes.get(order.condition_id) or {}
+    opuestos = {idx: p for idx, p in precios.items()
+                if idx != order.outcome_index}
     if opuestos:
-        par = min(opuestos) + order.price
-        if par > MAX_PAR_COST:
+        acciones = state.held_shares.get(order.condition_id) or {}
+        nuestras = order.size + (acciones.get(order.outcome_index, 0.0))
+        gastado = cost + sum(
+            p * acciones.get(idx, 0.0) for idx, p in precios.items())
+        # Cobro en el peor de los casos (mercados de dos salidas).
+        peor = min([nuestras] + [acciones.get(idx, 0.0) for idx in opuestos])
+        if peor <= gastado:
             return RiskDecision(
-                False, f"ya tenemos el otro lado a {min(opuestos):.2f}; "
-                       f"con esta entrada a {order.price:.2f} el par cuesta "
-                       f"{par:.2f} y solo paga 1.00")
+                False, f"ya tenemos el otro lado de este mercado: sumando "
+                       f"esta entrada pondríamos ${gastado:.2f} y en el peor "
+                       f"caso cobraríamos ${peor:.2f}. No es arbitraje")
 
     # Los dos frenos de capital se APAGAN poniendo su porcentaje en 1.0
     # ("frená cuando haya perdido el 100%"), y hay que comprobarlo aparte:
