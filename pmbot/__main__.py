@@ -443,7 +443,9 @@ def cmd_analisis(app: App, dias: int | None = None) -> None:
 
     for por, titulo in (("categoria", "POR CATEGORÍA"),
                         ("estrategia", "POR ESTRATEGIA"),
-                        ("precio", "POR PRECIO DE ENTRADA")):
+                        ("precio", "POR PRECIO DE ENTRADA"),
+                        ("categoria+precio", "CATEGORÍA × PRECIO "
+                         "(¿el problema es la categoría o el precio?)")):
         print(formatear(agrupar(cerradas, por), titulo))
     print("\n(cerradas = ya resueltas o vendidas; las abiertas no cuentan)")
 

@@ -134,6 +134,15 @@ def categoria_real(categoria: str, pregunta: str) -> str:
     return categoria or "other"
 
 
+def etiqueta_precio(p: float) -> str:
+    """Franja de precio de entrada. Pura."""
+    if p < 0.35: return "1 muy barato <0.35"
+    if p < 0.50: return "2 barato .35-.50"
+    if p < 0.65: return "3 medio  .50-.65"
+    if p < 0.80: return "4 caro   .65-.80"
+    return "5 carisimo >0.80"
+
+
 @dataclass(frozen=True)
 class Grupo:
     nombre: str
@@ -158,13 +167,10 @@ def agrupar(cerradas: list[Cerrada], por: str) -> list[Grupo]:
             return c.category
         if por == "estrategia":
             return c.strategy
+        if por == "categoria+precio":
+            return f"{c.category:<9} {etiqueta_precio(c.precio_medio)}"
         if por == "precio":
-            p = c.precio_medio
-            if p < 0.35: return "1 muy barato <0.35"
-            if p < 0.50: return "2 barato .35-.50"
-            if p < 0.65: return "3 medio  .50-.65"
-            if p < 0.80: return "4 caro   .65-.80"
-            return "5 carisimo >0.80"
+            return etiqueta_precio(c.precio_medio)
         raise ValueError(f"no sé agrupar por '{por}'")
 
     acc: dict[str, list[float]] = {}
@@ -186,16 +192,16 @@ def revisar(cerradas: list[Cerrada]) -> list[str]:
 
 def formatear(grupos: list[Grupo], titulo: str) -> str:
     lineas = [f"\n{titulo}",
-              f"{'':<20} {'cerradas':>9} {'acierto':>8} {'invertido':>10} "
+              f"{'':<28} {'cerradas':>9} {'acierto':>8} {'invertido':>10} "
               f"{'PnL':>9} {'ROI':>8}"]
     tn = tg = 0
     ti = tp = 0.0
     for g in grupos:
-        lineas.append(f"{g.nombre:<20} {g.n:>9} {g.acierto:>7.0%} "
+        lineas.append(f"{g.nombre:<28} {g.n:>9} {g.acierto:>7.0%} "
                       f"{g.invertido:>10.2f} {g.pnl:>+9.2f} {g.roi:>7.1%}")
         tn += g.n; tg += g.ganadas; ti += g.invertido; tp += g.pnl
     if grupos:
         roi = tp / ti if ti else 0.0
-        lineas.append(f"{'TOTAL':<20} {tn:>9} {tg/tn if tn else 0:>7.0%} "
+        lineas.append(f"{'TOTAL':<28} {tn:>9} {tg/tn if tn else 0:>7.0%} "
                       f"{ti:>10.2f} {tp:>+9.2f} {roi:>7.1%}")
     return "\n".join(lineas)

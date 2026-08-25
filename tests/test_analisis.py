@@ -169,3 +169,16 @@ def test_un_deporte_de_verdad_sigue_siendo_deporte(tmp_path):
                      ("Cincinnati Reds vs. San Francisco Giants: O/U", "0xmlb"))
     [c] = posiciones_cerradas(conn)
     assert c.category == "sports"
+
+
+def test_el_cruce_de_categoria_y_precio_separa_ambas_cosas(tmp_path):
+    """Cripto perdía y casi todas sus entradas eran caras: sin cruzar las
+    dos dimensiones no se sabe si el problema es la categoría o el precio,
+    y vetar la categoría sería castigarla dos veces."""
+    conn = _db(tmp_path)
+    _orden(conn, "c1", "0xbtc", "No", "BUY", 12.0, 14.4, category="crypto")
+    _orden(conn, "c2", "0xmlb", "Over", "BUY", 25.0, 50.0, category="sports")
+    grupos = {g.nombre.strip(): g for g in
+              agrupar(posiciones_cerradas(conn), "categoria+precio")}
+    assert any(k.startswith("crypto") and "carisimo" in k for k in grupos), grupos.keys()
+    assert any(k.startswith("sports") and "medio" in k for k in grupos), grupos.keys()
