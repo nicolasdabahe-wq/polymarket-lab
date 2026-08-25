@@ -14,6 +14,7 @@
   python -m pmbot live-check         # verificar conexión/saldo del modo real
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
+  python -m pmbot analisis [--dias N] # qué funciona y qué no, sobre lo ya cerrado
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
   python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
@@ -408,6 +409,45 @@ async def cmd_validate_wallets(app: App, force: bool = False,
     print(f"\nWallets habilitadas para copia: {rows['c']}")
 
 
+def cmd_analisis(app: App, dias: int | None = None) -> None:
+    """Rendimiento cerrado por categoría, estrategia y precio de entrada.
+
+    Sale de posiciones CERRADAS del historial de órdenes, no de la cartera
+    actual: las ganadoras se cobran y desaparecen de la cartera, así que
+    medir ahí infla las pérdidas (pasó el 2026-08-24 con los esports).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .monitor.analisis import (agrupar, formatear, posiciones_cerradas,
+                                   revisar)
+
+    desde = None
+    if dias:
+        desde = (datetime.now(timezone.utc)
+                 - timedelta(days=dias)).isoformat(timespec="seconds")
+    cerradas = posiciones_cerradas(app.conn, desde)
+    if not cerradas:
+        print("Todavía no hay posiciones cerradas en esa ventana.")
+        return
+    ventana = f"últimos {dias} días" if dias else "todo el historial"
+    print(f"\n📊 RENDIMIENTO DE LO YA CERRADO ({ventana}) — "
+          f"{len(cerradas)} posiciones")
+
+    # Primero la revisión de cordura: si algún número no puede existir, se
+    # avisa ANTES de las tablas en vez de presentarlo como si fuera cierto.
+    problemas = revisar(cerradas)
+    if problemas:
+        print("\n⚠️  NÚMEROS IMPOSIBLES — no te fíes de las tablas de abajo:")
+        for p in problemas[:8]:
+            print(f"   {p}")
+
+    for por, titulo in (("categoria", "POR CATEGORÍA"),
+                        ("estrategia", "POR ESTRATEGIA"),
+                        ("precio", "POR PRECIO DE ENTRADA")):
+        print(formatear(agrupar(cerradas, por), titulo))
+    print("\n(cerradas = ya resueltas o vendidas; las abiertas no cuentan)")
+
+
 def cmd_set_baseline(app: App, amount: float) -> None:
     """Fija el capital inicial de referencia para el PnL.
 
@@ -631,6 +671,9 @@ def main() -> None:
     p_cap.add_argument("--dias", type=float, default=None,
                        help="corte en días (por defecto, el máximo que "
                             "permite la política de riesgo)")
+    p_ana = sub.add_parser("analisis")
+    p_ana.add_argument("--dias", type=int, default=None,
+                       help="limitar a los últimos N días")
     p_base = sub.add_parser("set-baseline")
     p_base.add_argument("amount", type=float)
     sub.add_parser("run")
@@ -675,6 +718,8 @@ def main() -> None:
                 await cmd_notify_test(app)
             elif args.command == "test-trade":
                 await cmd_test_trade(app)
+            elif args.command == "analisis":
+                cmd_analisis(app, dias=args.dias)
             elif args.command == "diagnose":
                 from .diagnose import diagnose
                 await diagnose()
