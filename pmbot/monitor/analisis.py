@@ -298,8 +298,17 @@ class Asimetria:
             entradas = (f"{base}. Ese acierto NO es peor que el precio que "
                         f"pagas: saldría igual el "
                         f"{self.compatible_con_entradas_justas:.0%} de las "
-                        f"veces con entradas justas, así que la entrada no "
-                        f"es el problema")
+                        f"veces con entradas justas, así que contra la "
+                        f"entrada no hay prueba")
+            if self.esperado_por_accion < 0:
+                # Sin prueba no es lo mismo que inocente: el mejor cálculo
+                # con lo que hay sigue dando negativo, solo que la muestra
+                # no permite distinguirlo de la mala suerte. Decir "la
+                # entrada está bien" sería pasarse de la raya.
+                entradas += (f" (ojo: con el acierto observado, aguantar "
+                             f"hasta el final tampoco habría sido rentable, "
+                             f"{self.esperado_por_accion:+.2f} por acción — "
+                             f"sin prueba no es lo mismo que sin problema)")
             if malas > 0:
                 return (f"{entradas}. Y sin embargo pierde: la ganadora "
                         f"media deja ${self.media_ganadora:.2f} y la "

@@ -228,6 +228,12 @@ strategies:
     default_roi_untested: 0.05  # wallets sin backtest: ventaja conservadora
     consensus_boost: 0.4        # cada wallet extra que coincide suma 40%
     min_trade_usdc: 25.0      # piso por copia
+    # Salidas. El bot vende cuando la wallet copiada sale, y eso lo lee del
+    # snapshot de sus posiciones. Un snapshot recortado o viejo NO es prueba
+    # de que haya salido: con estos dos valores, ante la duda se aguanta.
+    # `snapshot_positions_limit` debe ir igual que smart_money.positions_per_wallet.
+    snapshot_positions_limit: 25
+    snapshot_max_horas: 12.0
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     # Escudo sharp: no copiar pagando más que la línea de las casas
     # profesionales + esta tolerancia. La primera noche se compró NO de

@@ -355,7 +355,7 @@ def test_mala_racha_larga_no_se_confunde_con_entradas_caras():
     a = asimetria(cerradas)
 
     assert a.compatible_con_entradas_justas > 0.10
-    assert "la entrada no es el problema" in a.diagnostico
+    assert "contra la entrada no hay prueba" in a.diagnostico
 
 
 def test_entradas_caras_de_verdad_si_se_acusan():
@@ -370,3 +370,21 @@ def test_entradas_caras_de_verdad_si_se_acusan():
 
     assert a.compatible_con_entradas_justas < 0.01
     assert "el problema es la ENTRADA" in a.diagnostico
+
+
+def test_sin_prueba_no_es_lo_mismo_que_sin_problema():
+    """Con el acierto observado por debajo del precio pero dentro de lo que
+    explica el azar, el diagnóstico absuelve a la entrada por falta de
+    pruebas — y tiene que decir además que el mejor cálculo disponible sigue
+    dando negativo. Callarlo se leería como "la entrada está bien"."""
+    from pmbot.monitor.analisis import asimetria
+
+    # 30 de 65 comprando a 0.53: el caso real de copy_trading.
+    cerradas = ([_cerrada(5.3, 10.0, 10.0)] * 30
+                + [_cerrada(5.3, 0.0, 10.0)] * 35)
+    a = asimetria(cerradas)
+
+    assert a.compatible_con_entradas_justas > 0.10   # no hay prueba...
+    assert a.esperado_por_accion < 0                 # ...pero tampoco es sano
+    assert "contra la entrada no hay prueba" in a.diagnostico
+    assert "sin prueba no es lo mismo que sin problema" in a.diagnostico

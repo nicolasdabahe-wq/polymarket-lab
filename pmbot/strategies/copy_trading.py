@@ -213,6 +213,11 @@ class CopyTradingStrategy:
         # Piso por apuesta: por debajo de esto no vale la pena el riesgo
         # operativo (fees de red, spread, mínimos del exchange).
         self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
+        # Salidas: cuántas posiciones trae como mucho el snapshot de una
+        # wallet (el mismo `positions_per_wallet` del bloque smart_money) y
+        # cuánto puede envejecer antes de dejar de ser prueba de nada.
+        self.snapshot_limite = int(cfg.get("snapshot_positions_limit", 25))
+        self.snapshot_max_horas = float(cfg.get("snapshot_max_horas", 12.0))
         self.max_entry = float(cfg.get("max_entry_price", 0.80))
         # Dimensionamiento por ventaja (ver sizing.py).
         self.kelly_fraction = float(cfg.get("kelly_fraction", 0.25))
@@ -533,6 +538,42 @@ class CopyTradingStrategy:
                 executed.append(f"{market['question'][:60]} — {reason}")
         return executed
 
+    def _snapshot_prueba_salida(self, wallet: str) -> bool:
+        """¿Podemos afirmar que la wallet ya no tiene ese mercado?
+
+        `check_exits` vendía en cuanto no encontraba la posición en
+        `wallet_positions`, pero esa tabla es una foto y no encontrar algo
+        en una foto no significa que no exista. Dos formas de equivocarse,
+        las dos caras:
+
+        · La foto trae como mucho `positions_per_wallet` posiciones (25).
+          Las wallets grandes que copiamos tienen muchas más — el ranking
+          del 2026-08-25 lista una con 118 mercados — así que lo que copiamos
+          casi nunca cabe, y el bot leía ese hueco como "cerró su posición"
+          y liquidaba una posición perfectamente viva.
+        · Si la consulta a la API devuelve vacío, el refresco borra las filas
+          de esa wallet antes de reinsertar: quedaría a cero y se venderían
+          de golpe todas las copias suyas.
+
+        Aguantar cuando no sabemos es lo barato: si de verdad salió, nos
+        enteramos en el siguiente refresco. Vender por error cuesta el
+        diferencial y mata la posición ganadora.
+        """
+        fila = self.conn.execute(
+            """SELECT COUNT(*) n, MAX(fetched_at) visto
+               FROM wallet_positions WHERE wallet = ?""", (wallet,)).fetchone()
+        n, visto = (fila["n"] or 0), fila["visto"]
+        if not n or not visto:
+            return False                      # nunca la miramos, o vino vacía
+        if n >= self.snapshot_limite:
+            return False                      # foto recortada: el hueco no prueba nada
+        try:
+            edad = (datetime.now(timezone.utc)
+                    - datetime.fromisoformat(visto)).total_seconds() / 3600.0
+        except (TypeError, ValueError):
+            return False
+        return edad <= self.snapshot_max_horas
+
     async def check_exits(self) -> list[str]:
         """Vende posiciones cuya wallet copiada salió o redujo >50%."""
         if not self.enabled:
@@ -550,6 +591,8 @@ class CopyTradingStrategy:
                 """SELECT size FROM wallet_positions
                    WHERE wallet = ? AND condition_id = ?""",
                 (wallet, pos["condition_id"])).fetchone()
+            if not held and not self._snapshot_prueba_salida(wallet):
+                continue
             original = meta.get("copied_size")
             if held and (original is None or held["size"] > 0.5 * original):
                 if original is None:
