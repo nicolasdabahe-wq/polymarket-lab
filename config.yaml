@@ -167,6 +167,12 @@ risk:
   # se acabe el capital o hasta que el dueño baje el kill switch a mano.
   daily_stop_loss_pct: 1.0
   min_order_usdc: 10.0      # piso por apuesta pedido por el dueño
+  # PREMIO MÍNIMO. Decisión del dueño (2026-08-24): "no quiero ganar 2
+  # dólares". Una apuesta a 0.83 arriesga $8.53 para ganar $1.66 y exige
+  # acertar 83 de cada 100 solo para empatar; el bot acierta ~50. Esta regla
+  # ata precio y tamaño: si lo que se puede ganar no llega a este número, la
+  # apuesta no se hace, por buena que parezca.
+  min_ganancia_usdc: 15.0
   # Freno total: también apagado por orden del dueño (2026-08-22), advertido
   # de que sin él nada detiene al bot mientras nadie mira.
   max_drawdown_pct: 1.0
@@ -204,10 +210,10 @@ strategies:
     # Kelly fraccionado sobre el retorno esperado, que sale del ROI que dio
     # copiar a esa wallet en el backtest, ajustado por consenso y slippage.
     kelly_fraction: 0.25        # 25% de Kelly: nuestras probabilidades son ruidosas
-    max_trade_pct: 0.12         # techo por apuesta (~$29 con $240)
+    max_trade_pct: 0.18         # techo por apuesta
     default_roi_untested: 0.05  # wallets sin backtest: ventaja conservadora
     consensus_boost: 0.4        # cada wallet extra que coincide suma 40%
-    min_trade_usdc: 12.0      # piso por copia
+    min_trade_usdc: 25.0      # piso por copia
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
     # Escudo sharp: no copiar pagando más que la línea de las casas
     # profesionales + esta tolerancia. La primera noche se compró NO de
@@ -228,7 +234,7 @@ strategies:
     # (2026-08-22) las entradas caras dieron +0.50/+0.60 cuando ganaban y
     # -13 cuando perdían. A 0.75 se arriesga $12 para ganar $4: pide acertar
     # 3 de cada 4 y paga en consecuencia. Número elegido por el dueño.
-    max_entry_price: 0.75
+    max_entry_price: 0.60
     # El en vivo SÍ se copia: decisión del dueño (2026-08-22). Lo que hacía
     # daño no era el en vivo sino el precio al que entraba. El techo de
     # arriba y el tope de slippage son los que cuidan la entrada.
@@ -256,7 +262,7 @@ strategies:
       categories: [politics, economy, geopolitics, crypto, sports]
       # Deportes SOLO antes del inicio del partido (en vivo es incopiable).
       sports_only_prematch: true
-      max_entry_price: 0.80
+      max_entry_price: 0.60
   news_trading:
     enabled: false            # fase 3: requiere ANTHROPIC_API_KEY y research/
   # Arbitraje de escalera: contradicciones lógicas entre mercados hermanos.
@@ -283,10 +289,10 @@ strategies:
     enabled: true
     budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     min_edge: 0.08          # el modelo debe discrepar >= 8 puntos del libro
-    max_entry_price: 0.75
-    min_trade_usdc: 12.0
+    max_entry_price: 0.60
+    min_trade_usdc: 25.0
     kelly_fraction: 0.25
-    max_trade_pct: 0.12
+    max_trade_pct: 0.18
     # El abridor se cuenta a media fuerza: la pitagórica del equipo ya lo
     # incluye en su temporada, contarlo entero sería contarlo dos veces.
     peso_pitcher: 0.5
@@ -307,10 +313,10 @@ strategies:
   crypto_value:
     enabled: true
     budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
-    base_pct_per_trade: 0.05
-    min_trade_usdc: 12.0
+    base_pct_per_trade: 0.09
+    min_trade_usdc: 25.0
     min_edge: 0.08            # el modelo debe discrepar >=8 puntos de prob.
-    max_entry_price: 0.85
+    max_entry_price: 0.60
     min_days_to_resolution: 0.5
     # Alineado con el tope global: más allá de tres días el riesgo rechaza
     # igual, así que escanear más lejos es trabajo perdido.

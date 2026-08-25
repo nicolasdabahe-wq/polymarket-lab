@@ -176,15 +176,21 @@ def test_invalid_prices_block():
 # --- techo de entrada y deportes en vivo en las copias ---
 
 def test_techo_de_entrada_deja_fuera_las_apuestas_de_centavos():
+    """Política del dueño (2026-08-24): nada por encima de 0.60.
+
+    Su queja, con números reales: a 0.83 se arriesgan $8.53 para cobrar
+    $10.19. Ganar $1.66 exige acertar 83 de cada 100 solo para empatar, y
+    el bot acierta la mitad. Los precios que él nombró como aceptables
+    fueron 0.45, 0.50, 0.55 y 0.60 como tope.
+    """
     from pmbot.config import load_config
-    cfg = load_config("config.yaml").section(
-        "strategies")["copy_trading"]
-    techo = float(cfg["max_entry_price"])
-    # Entradas reales del 2026-08-22: las que ganaban centavos quedan fuera
-    # (0.92 y 0.95 daban +0.50/+0.60) y la mejor del día sigue entrando
-    # (Blue Jays a 0.68 dio +5.72).
-    assert 0.95 > techo and 0.92 > techo
-    assert 0.68 <= techo
+    todas = load_config("config.yaml").section("strategies")
+    for nombre in ("copy_trading", "sports_value", "crypto_value"):
+        techo = float(todas[nombre]["max_entry_price"])
+        assert techo <= 0.60, f"{nombre} deja entrar a {techo}"
+        assert 0.55 <= techo, f"{nombre} se cerró de más: {techo}"
+    consenso = todas["copy_trading"]["holdings_consensus"]
+    assert float(consenso["max_entry_price"]) <= 0.60
 
 
 # --- escudo sharp sobre las copias (caso Brentford, 2026-08-22) ---

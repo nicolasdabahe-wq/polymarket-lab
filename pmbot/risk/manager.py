@@ -40,6 +40,13 @@ class Limits:
     max_days_to_resolution: float = 3650.0   # tope duro por apuesta
     slow_days: float = 10.0                  # a partir de acá es "lenta"
     max_pct_slow: float = 1.0                # máx del equity en lentas
+    # Ganancia mínima que tiene que estar en juego para que valga la pena.
+    # Una apuesta paga (1/precio - 1) por dólar: a 0.83 se arriesgan $8.53
+    # para ganar $1.66, y hace falta acertar 83 de cada 100 solo para
+    # empatar. Esta regla ata precio y tamaño en un solo número: si el
+    # premio no llega, la apuesta no se hace. Decisión del dueño
+    # (2026-08-24): "no quiero ganar 2 dólares, mínimo 15 o 20".
+    min_ganancia_usdc: float = 0.0
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -55,6 +62,7 @@ class Limits:
                 cfg.get("max_days_to_resolution", 3650)),
             slow_days=float(cfg.get("slow_days", 10)),
             max_pct_slow=float(cfg.get("max_pct_slow", 1.0)),
+            min_ganancia_usdc=float(cfg.get("min_ganancia_usdc", 0.0)),
         )
 
 
@@ -128,6 +136,15 @@ def evaluate(order: OrderRequest, state: PortfolioState,
                             f"${limits.min_order_usdc:.2f})")
     if cost > state.cash:
         return RiskDecision(False, f"cash insuficiente (${state.cash:.2f})")
+
+    # Premio en juego: lo que se cobraría de más si la apuesta gana.
+    if limits.min_ganancia_usdc > 0 and order.price > 0:
+        premio = cost * (1.0 / order.price - 1.0)
+        if premio < limits.min_ganancia_usdc:
+            return RiskDecision(
+                False, f"premio flaco: arriesga ${cost:.2f} a {order.price:.2f} "
+                       f"para ganar solo ${premio:.2f} (mínimo "
+                       f"${limits.min_ganancia_usdc:.2f})")
 
     # Velocidad del capital: no atar dinero a resoluciones lejanas.
     dias = order.days_to_resolution

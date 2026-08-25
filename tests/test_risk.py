@@ -311,3 +311,64 @@ def test_sin_frenos_el_kill_switch_sigue_siendo_del_dueno(tmp_path):
     assert not rm.kill_switch_on()
     rm.kill_file.touch()
     assert rm.kill_switch_on()
+
+
+# --- premio mínimo (pedido del dueño, 2026-08-24) ---
+# "No quiero ganar 2 dólares, mínimo 15 o 20."
+
+LIMITS_PREMIO = Limits(
+    max_pct_per_market=1.0, max_pct_per_category=1.0,
+    max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+    daily_stop_loss_pct=1.0, min_order_usdc=10.0, max_drawdown_pct=1.0,
+    max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0,
+    min_ganancia_usdc=15.0)
+
+
+def test_la_apuesta_cara_de_premio_flaco_se_rechaza():
+    """El caso que trajo el dueño: pagar 0.83 para ganar unos centavos por
+    dólar. Con $12 en juego se cobrarían $14.46: $2.46 de ganancia."""
+    d = evaluate(order(size=12.0 / 0.83, price=0.83, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PREMIO)
+    assert not d.approved and "premio flaco" in d.reason
+
+
+def test_ni_agrandando_la_apuesta_pasa_un_precio_muy_alto():
+    """A 0.83 harían falta $73 para ganar $15: el resto de límites lo corta
+    antes, pero la regla también lo ve."""
+    d = evaluate(order(size=25 / 0.83, price=0.83, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PREMIO)
+    assert not d.approved and "premio flaco" in d.reason
+
+
+def test_una_apuesta_de_verdad_a_precio_medio_pasa():
+    # $25 a 0.60 -> se cobran $41.67, o sea $16.67 de ganancia.
+    d = evaluate(order(size=25 / 0.60, price=0.60, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PREMIO)
+    assert d.approved, d.reason
+
+
+def test_apuesta_chica_a_precio_bueno_tambien_se_rechaza():
+    """La regla no es solo sobre el precio: $10 a 0.50 solo ganan $10."""
+    d = evaluate(order(size=20.0, price=0.50, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PREMIO)
+    assert not d.approved and "premio flaco" in d.reason
+
+
+def test_cuanto_mas_barato_menos_hace_falta_arriesgar():
+    """A 0.40 bastan $10 para ganar $15; a 0.60 hacen falta $22.5."""
+    assert evaluate(order(size=25.0, price=0.40, days_to_resolution=1),
+                    state(cash=200.0), LIMITS_PREMIO).approved
+    d = evaluate(order(size=30.0 / 0.60, price=0.60, days_to_resolution=1),
+                 state(cash=200.0), LIMITS_PREMIO)
+    assert d.approved, d.reason
+
+
+def test_la_regla_apagada_no_estorba():
+    """Con 0 la regla no existe: las ventas y el modo viejo siguen igual."""
+    assert evaluate(order(size=20.0, price=0.90, days_to_resolution=1),
+                    state(cash=200.0), LIMITS_TRES).approved
+
+
+def test_vender_nunca_se_bloquea_por_premio():
+    assert evaluate(order(side="SELL", size=40.0, price=0.95),
+                    state(cash=200.0), LIMITS_PREMIO).approved
