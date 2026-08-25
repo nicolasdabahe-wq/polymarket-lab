@@ -372,3 +372,38 @@ def test_la_regla_apagada_no_estorba():
 def test_vender_nunca_se_bloquea_por_premio():
     assert evaluate(order(side="SELL", size=40.0, price=0.95),
                     state(cash=200.0), LIMITS_PREMIO).approved
+
+
+# --- categorías vetadas (evidencia del 2026-08-24) ---
+
+LIMITS_VETO = Limits(
+    max_pct_per_market=1.0, max_pct_per_category=1.0,
+    max_pct_per_copied_wallet=1.0, max_total_exposure_pct=1.0,
+    daily_stop_loss_pct=1.0, min_order_usdc=10.0, max_drawdown_pct=1.0,
+    max_days_to_resolution=3, slow_days=3, max_pct_slow=1.0,
+    categorias_vetadas=frozenset({"esports"}))
+
+
+def test_no_se_compra_nada_de_una_categoria_vetada():
+    """Esports perdió 7 de 7 posiciones: $120.56 invertidos, $0.00 de vuelta."""
+    d = evaluate(order(category="esports", size=50.0, price=0.50,
+                       days_to_resolution=1), state(cash=200.0), LIMITS_VETO)
+    assert not d.approved and "vetada" in d.reason
+
+
+def test_el_veto_no_distingue_mayusculas():
+    d = evaluate(order(category="Esports", size=50.0, price=0.50,
+                       days_to_resolution=1), state(cash=200.0), LIMITS_VETO)
+    assert not d.approved and "vetada" in d.reason
+
+
+def test_el_veto_no_toca_a_los_deportes_de_verdad():
+    assert evaluate(order(category="sports", size=50.0, price=0.50,
+                          days_to_resolution=1),
+                    state(cash=200.0), LIMITS_VETO).approved
+
+
+def test_vender_lo_vetado_siempre_se_permite():
+    """De una posición vetada hay que poder salir."""
+    assert evaluate(order(category="esports", side="SELL", size=40.0,
+                          price=0.30), state(cash=200.0), LIMITS_VETO).approved

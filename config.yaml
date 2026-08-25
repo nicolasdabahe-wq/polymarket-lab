@@ -173,6 +173,12 @@ risk:
   # ata precio y tamaño: si lo que se puede ganar no llega a este número, la
   # apuesta no se hace, por buena que parezca.
   min_ganancia_usdc: 15.0
+  # CATEGORÍAS VETADAS. Los esports perdieron las 7 de 7 posiciones: $120.56
+  # invertidos, $0.00 de vuelta. Es la fuga más grande de todo el proyecto y
+  # siete derrotas seguidas son una probabilidad de 1 entre 128, así que no
+  # es mala racha. El freno del 2026-08-22 nunca llegó a actuar porque estos
+  # mercados se clasificaban como 'sports' (ya corregido en gamma.py).
+  categorias_vetadas: [esports]
   # Freno total: también apagado por orden del dueño (2026-08-22), advertido
   # de que sin él nada detiene al bot mientras nadie mira.
   max_drawdown_pct: 1.0

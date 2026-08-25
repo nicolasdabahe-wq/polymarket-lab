@@ -163,3 +163,32 @@ def test_tape_acumula_apariciones_entre_corridas(tmp_path):
         tape.registrar_candidatas(asyncio.run(tape.fetch()), 500)
     fila = conn.execute("SELECT * FROM wallet_candidates").fetchone()
     assert fila["trades_grandes"] == 3
+
+
+def test_los_esports_tienen_su_propia_categoria():
+    """Bug del 2026-08-22 al 24: 'esport' estaba dentro del grupo de deportes,
+    así que estos mercados se clasificaban como 'sports' y el freno que los
+    bloqueaba —que comprueba category=='esports'— nunca llegó a actuar.
+    Costó $120.56: siete posiciones, siete perdidas.
+    """
+    from pmbot.data.gamma import categorize_tags
+
+    for etiqueta in ("Esports", "LoL", "League of Legends", "Counter-Strike",
+                     "CS2", "Valorant", "Dota 2", "Overwatch"):
+        assert categorize_tags([{"label": etiqueta}]) == "esports", etiqueta
+
+
+def test_los_deportes_de_verdad_siguen_siendo_deportes():
+    """El cambio de arriba no puede llevarse por delante al béisbol."""
+    from pmbot.data.gamma import categorize_tags
+
+    for etiqueta in ("MLB", "NBA", "NFL", "Soccer", "Tennis", "UFC", "Golf"):
+        assert categorize_tags([{"label": etiqueta}]) == "sports", etiqueta
+
+
+def test_un_evento_de_esports_no_se_cuela_como_otro():
+    """Los tags con el nombre del juego caían en 'other' y escapaban incluso
+    de los filtros de deportes."""
+    from pmbot.data.gamma import categorize_tags
+
+    assert categorize_tags([{"label": "LoL"}, {"label": "Sports"}]) == "esports"

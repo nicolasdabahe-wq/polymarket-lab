@@ -27,8 +27,18 @@ TAG_CATEGORY_MAP: list[tuple[tuple[str, ...], str]] = [
     (("econom", "fed", "fomc", "inflation", "rates", "macro", "business",
       "finance", "gdp", "jobs", "tariff", "cpi"), "economy"),
     (("crypto", "bitcoin", "ethereum", "solana", "defi", "nft"), "crypto"),
+    # Los esports van ANTES que los deportes y con su propia categoría: con
+    # "esport" metido en la lista de abajo quedaban clasificados como
+    # 'sports', y el freno que los bloqueaba comprobaba category=='esports',
+    # una condición que nunca se cumplía. Estuvo sin funcionar desde el
+    # 2026-08-22 y costó $120.56 (7 posiciones, 7 perdidas). Los nombres de
+    # los juegos hacen falta porque muchos eventos traen 'LoL' o 'Valorant'
+    # como primer tag, y sin ellos caían en 'other' y escapaban de todo.
+    (("esport", "e-sport", "lol", "league of legends", "counter-strike",
+      "cs2", "csgo", "valorant", "dota", "overwatch", "rocket league",
+      "starcraft", "call of duty", "rainbow six"), "esports"),
     (("sport", "nba", "nfl", "mlb", "nhl", "soccer", "football", "tennis",
-      "esport", "ufc", "boxing", "golf", "f1", "olympic", "chess"), "sports"),
+      "ufc", "boxing", "golf", "f1", "olympic", "chess"), "sports"),
     (("culture", "entertainment", "movie", "music", "celebrity", "awards",
       "tv", "pop"), "culture"),
     (("science", "tech", "ai", "space", "climate", "health"), "tech"),

@@ -47,6 +47,9 @@ class Limits:
     # premio no llega, la apuesta no se hace. Decisión del dueño
     # (2026-08-24): "no quiero ganar 2 dólares, mínimo 15 o 20".
     min_ganancia_usdc: float = 0.0
+    # Categorías vetadas: no se compra nada de ellas, venga de la estrategia
+    # que venga. Se veta con evidencia, no por prejuicio.
+    categorias_vetadas: frozenset[str] = frozenset()
 
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> "Limits":
@@ -63,6 +66,9 @@ class Limits:
             slow_days=float(cfg.get("slow_days", 10)),
             max_pct_slow=float(cfg.get("max_pct_slow", 1.0)),
             min_ganancia_usdc=float(cfg.get("min_ganancia_usdc", 0.0)),
+            categorias_vetadas=frozenset(
+                str(c).strip().lower()
+                for c in (cfg.get("categorias_vetadas") or [])),
         )
 
 
@@ -129,6 +135,9 @@ def evaluate(order: OrderRequest, state: PortfolioState,
 
     cost = order.cost
     equity = state.equity
+    if (order.category or "").lower() in limits.categorias_vetadas:
+        return RiskDecision(
+            False, f"categoría vetada: '{order.category}' no se opera")
     if equity <= 0:
         return RiskDecision(False, "equity agotado")
     if cost < limits.min_order_usdc:
