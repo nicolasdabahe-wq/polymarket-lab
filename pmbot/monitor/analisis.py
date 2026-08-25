@@ -26,6 +26,7 @@ from __future__ import annotations
 import sqlite3
 import re
 from dataclasses import dataclass
+from math import comb
 
 
 @dataclass(frozen=True)
@@ -228,6 +229,12 @@ def formatear(grupos: list[Grupo], titulo: str) -> str:
     return "\n".join(lineas)
 
 
+# Cierres mínimos para pronunciarse. Por debajo, el acierto observado y el
+# precio pagado no se distinguen ni con la cuenta binomial: el 2026-08-25 el
+# diagnóstico culpó a las entradas con 8 cierres y no había nada que culpar.
+MIN_CIERRES = 20
+
+
 @dataclass(frozen=True)
 class Asimetria:
     """Por qué un porcentaje de acierto alto puede perder dinero."""
@@ -253,28 +260,59 @@ class Asimetria:
         return self.aciertos - self.precio_medio
 
     @property
+    def cierres(self) -> int:
+        return self.ganadoras + self.perdedoras
+
+    @property
+    def compatible_con_entradas_justas(self) -> float:
+        """Con qué frecuencia saldría este acierto si las entradas fueran
+        justas, o sea si el precio pagado fuera la probabilidad real.
+
+        Comprar a 0.42 exige acertar el 42%. Ver 2 de 8 parece un desastre
+        y sin embargo pasa el 27.5% de las veces con entradas perfectas: no
+        es prueba de nada. Sin esta cuenta el diagnóstico llamaba "problema
+        de entrada" al azar — pasó el 2026-08-25 y habría mandado a apretar
+        el techo de precio, que no era el culpable.
+        """
+        n, k = self.cierres, self.ganadoras
+        p = min(max(self.precio_medio, 0.0), 1.0)
+        if n == 0:
+            return 1.0
+        return sum(comb(n, i) * p ** i * (1 - p) ** (n - i)
+                   for i in range(k + 1))
+
+    @property
     def diagnostico(self) -> str:
-        if not self.ganadoras and not self.perdedoras:
+        if not self.cierres:
             return "sin cierres que juzgar"
-        if self.esperado_por_accion > 0 and (
-                self.media_ganadora * self.ganadoras
-                < self.media_perdedora * self.perdedoras):
-            return (
-                f"aciertas {self.aciertos:.0%} comprando a {self.precio_medio:.2f}: "
-                f"aguantando hasta el final eso deja "
-                f"{self.esperado_por_accion:+.2f} por acción y sería rentable. "
-                f"Pierde dinero porque la ganadora media deja "
-                f"${self.media_ganadora:.2f} y la perdedora media cuesta "
-                f"${self.media_perdedora:.2f}: se cobran las buenas de "
-                f"a poco y se pagan las malas enteras.")
-        if self.esperado_por_accion <= 0:
-            return (
-                f"aciertas {self.aciertos:.0%} pero compras a "
-                f"{self.precio_medio:.2f} de media: por encima de tu propio "
-                f"acierto. A ese precio pierde aunque se aguante hasta el "
-                f"final — el problema es la entrada, no la salida.")
-        return (f"aciertas {self.aciertos:.0%} comprando a "
-                f"{self.precio_medio:.2f}: sano.")
+        base = (f"aciertas {self.aciertos:.0%} comprando a "
+                f"{self.precio_medio:.2f} de media")
+        # Primero la pregunta honesta: ¿este acierto se distingue del azar?
+        if self.cierres < MIN_CIERRES:
+            return (f"{base}, pero son {self.cierres} cierres. Con menos de "
+                    f"{MIN_CIERRES} no se puede separar una mala racha de un "
+                    f"problema real: aquí no hay diagnóstico, hay ruido.")
+        if self.compatible_con_entradas_justas > 0.10:
+            malas = (self.media_perdedora * self.perdedoras
+                     - self.media_ganadora * self.ganadoras)
+            entradas = (f"{base}. Ese acierto NO es peor que el precio que "
+                        f"pagas: saldría igual el "
+                        f"{self.compatible_con_entradas_justas:.0%} de las "
+                        f"veces con entradas justas, así que la entrada no "
+                        f"es el problema")
+            if malas > 0:
+                return (f"{entradas}. Y sin embargo pierde: la ganadora "
+                        f"media deja ${self.media_ganadora:.2f} y la "
+                        f"perdedora media cuesta ${self.media_perdedora:.2f}."
+                        f" Se cobran las buenas de a poco y se pagan las "
+                        f"malas enteras — mira las SALIDAS.")
+            return f"{entradas}: sano."
+        return (f"{base}: por debajo de lo que exige ese precio, y con "
+                f"{self.cierres} cierres ya no es casualidad "
+                f"({self.compatible_con_entradas_justas:.1%} de "
+                f"probabilidad si fueran justas). A ese precio pierde "
+                f"aunque se aguante hasta el final — el problema es la "
+                f"ENTRADA, no la salida.")
 
 
 def asimetria(cerradas: list[Cerrada]) -> Asimetria:

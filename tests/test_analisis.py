@@ -201,17 +201,17 @@ def test_asimetria_detecta_cobrar_poco_y_pagar_entero():
     from pmbot.monitor.analisis import asimetria
 
     # 6 ganadoras de +$0.50, 4 perdedoras de -$10. Acierto 60%, entrada 0.50.
-    cerradas = ([_cerrada(10.0, 10.5, 20.0)] * 6
-                + [_cerrada(10.0, 0.0, 20.0)] * 4)
+    cerradas = ([_cerrada(10.0, 10.5, 20.0)] * 36
+                + [_cerrada(10.0, 0.0, 20.0)] * 24)
     a = asimetria(cerradas)
 
-    assert a.ganadoras == 6 and a.perdedoras == 4
+    assert a.ganadoras == 36 and a.perdedoras == 24
     assert a.aciertos == 0.6
     assert round(a.precio_medio, 3) == 0.5
     assert round(a.esperado_por_accion, 3) == 0.1     # w - p, sería rentable
     assert round(a.media_ganadora, 2) == 0.50
     assert round(a.media_perdedora, 2) == 10.00
-    assert "se cobran las buenas de a poco" in a.diagnostico
+    assert "mira las SALIDAS" in a.diagnostico
 
 
 def test_asimetria_culpa_a_la_entrada_cuando_el_precio_es_alto():
@@ -221,20 +221,20 @@ def test_asimetria_culpa_a_la_entrada_cuando_el_precio_es_alto():
     from pmbot.monitor.analisis import asimetria
 
     # 6 de 10 aciertos comprando a 0.80: 0.60 - 0.80 = -0.20 por acción.
-    cerradas = ([_cerrada(8.0, 10.0, 10.0)] * 6
-                + [_cerrada(8.0, 0.0, 10.0)] * 4)
+    cerradas = ([_cerrada(8.0, 10.0, 10.0)] * 30
+                + [_cerrada(8.0, 0.0, 10.0)] * 20)
     a = asimetria(cerradas)
 
     assert round(a.precio_medio, 2) == 0.80
     assert a.esperado_por_accion < 0
-    assert "el problema es la entrada" in a.diagnostico
+    assert "el problema es la ENTRADA" in a.diagnostico
 
 
 def test_asimetria_sana_no_inventa_problemas():
     from pmbot.monitor.analisis import asimetria
 
-    cerradas = ([_cerrada(5.0, 10.0, 10.0)] * 6
-                + [_cerrada(5.0, 0.0, 10.0)] * 4)
+    cerradas = ([_cerrada(5.0, 10.0, 10.0)] * 36
+                + [_cerrada(5.0, 0.0, 10.0)] * 24)
     a = asimetria(cerradas)
     assert round(a.precio_medio, 2) == 0.50 and a.aciertos == 0.6
     assert "sano" in a.diagnostico
@@ -323,3 +323,50 @@ def test_ventana_no_parte_una_compra_en_dos(tmp_path):
     c = posiciones_cerradas(conn, "2026-08-25T00:00:00")[0]
     assert c.invertido == 50.0          # las dos tandas, no solo la de hoy
     assert c.pnl == -50.0               # perderlo todo, no "perder 20"
+
+
+def test_diagnostico_calla_con_muestra_corta():
+    """El caso exacto del 2026-08-25: 2 aciertos de 8 comprando a 0.42. El
+    diagnóstico dictaminó "el problema es la entrada". Con entradas
+    perfectamente justas ese resultado sale el 27.5% de las veces — no era
+    prueba de nada, y actuar sobre él habría apretado el techo de precio,
+    que no era el culpable."""
+    from pmbot.monitor.analisis import asimetria
+
+    cerradas = ([_cerrada(4.2, 10.0, 10.0)] * 2
+                + [_cerrada(4.2, 0.0, 10.0)] * 6)
+    a = asimetria(cerradas)
+
+    assert a.cierres == 8
+    assert round(a.precio_medio, 2) == 0.42
+    assert a.esperado_por_accion < 0            # la cuenta ingenua acusaría
+    assert "ruido" in a.diagnostico
+    assert "ENTRADA" not in a.diagnostico       # pero no se acusa a nadie
+
+
+def test_mala_racha_larga_no_se_confunde_con_entradas_caras():
+    """Con muestra suficiente pero un acierto compatible con el precio
+    pagado, la entrada queda absuelta aunque el periodo pierda dinero."""
+    from pmbot.monitor.analisis import asimetria
+
+    # 24 de 50 a 0.50: acierto 48%, exactamente lo que ese precio pide.
+    cerradas = ([_cerrada(5.0, 10.0, 10.0)] * 24
+                + [_cerrada(5.0, 0.0, 10.0)] * 26)
+    a = asimetria(cerradas)
+
+    assert a.compatible_con_entradas_justas > 0.10
+    assert "la entrada no es el problema" in a.diagnostico
+
+
+def test_entradas_caras_de_verdad_si_se_acusan():
+    """Con muestra larga y un acierto muy por debajo del precio, sí hay
+    diagnóstico: si no, la herramienta no serviría para nada."""
+    from pmbot.monitor.analisis import asimetria
+
+    # 10 de 60 comprando a 0.60: eso no es mala suerte.
+    cerradas = ([_cerrada(6.0, 10.0, 10.0)] * 10
+                + [_cerrada(6.0, 0.0, 10.0)] * 50)
+    a = asimetria(cerradas)
+
+    assert a.compatible_con_entradas_justas < 0.01
+    assert "el problema es la ENTRADA" in a.diagnostico
