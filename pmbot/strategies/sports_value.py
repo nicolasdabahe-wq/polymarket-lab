@@ -266,6 +266,17 @@ class SportsValueStrategy:
                 and getattr(self.odds, "enabled", False)):
             self._nota("fútbol: sin ligas configuradas o sin ODDS_API_KEY")
             return []
+        # Traer los mercados de fútbol al cache. Nadie lo hacía: el escaneo
+        # diario guarda los 600 de más volumen y un partido de liga no entra
+        # ni de lejos, así que la consulta de abajo siempre encontraba cero
+        # por mucho que hubiera línea sharp que comparar.
+        if self.market_store is not None:
+            try:
+                frescos = await self.gamma.fetch_by_tag("soccer", limit=300)
+                if frescos:
+                    self.market_store.upsert_markets(frescos)
+            except Exception as exc:
+                log.warning("no pude refrescar mercados de fútbol: %s", exc)
         mercados = self._mercados_ganador_futbol()
         self._nota(f"fútbol: {len(mercados)} mercados «Will X win on FECHA?» "
                    f"en el cache de Polymarket")

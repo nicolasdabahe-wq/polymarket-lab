@@ -118,7 +118,13 @@ class MlbClient:
                          .get("probablePitcher") or {})
                     if p.get("id"):
                         ids.add(str(p["id"]))
-        eras = await self.eras(sorted(ids)) if ids else {}
+        # Los abridores son un extra: si no se pueden traer, los juegos
+        # salen igual y el modelo usa solo la pitagórica.
+        try:
+            eras = await self.eras(sorted(ids)) if ids else {}
+        except Exception as exc:
+            log.warning("abridores no disponibles, sigo sin ERA: %s", exc)
+            eras = {}
 
         fuera: list[JuegoMLB] = []
         for g in crudos:
@@ -145,11 +151,29 @@ class MlbClient:
         """ERA y entradas lanzadas de varios pitchers, en una sola llamada."""
         if not ids:
             return {}
-        data = await self._get("people", {
-            "personIds": ",".join(ids),
-            "hydrate": "stats(group=pitching,type=season)"})
+        # En lotes chicos: el 2026-08-27 el droplet recibía 406 pidiendo 13
+        # pitchers de una vez y la misma llamada con 5 pasaba. No pude
+        # reproducir el bloqueo desde fuera, así que esto es una mitigación,
+        # no un diagnóstico — lo que de verdad protege es que el fallo ya no
+        # se lleva por delante al resto (ver abajo).
+        crudos: list[dict[str, Any]] = []
+        for i in range(0, len(ids), 6):
+            lote = ids[i:i + 6]
+            try:
+                data = await self._get("people", {
+                    "personIds": ",".join(lote),
+                    "hydrate": "stats(group=pitching,type=season)"})
+            except Exception as exc:
+                # El ERA del abridor solo afina el modelo; sin él se opina
+                # igual con la pitagórica del equipo. Que una API secundaria
+                # tumbe la estrategia entera fue justo el fallo de esta
+                # semana, y no se repite un nivel más abajo.
+                log.warning("ERA de %d pitchers no disponible: %s",
+                            len(lote), exc)
+                continue
+            crudos.extend((data or {}).get("people", []))
         fuera: dict[str, tuple[float | None, float]] = {}
-        for p in (data or {}).get("people", []):
+        for p in crudos:
             era, ip = None, 0.0
             for s in p.get("stats", []):
                 sp = (s.get("splits") or [{}])[0].get("stat", {})

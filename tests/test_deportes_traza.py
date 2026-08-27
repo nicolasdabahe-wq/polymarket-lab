@@ -198,3 +198,60 @@ def test_la_mlb_caida_no_revienta_la_estrategia(tmp_path):
     est = SportsValueStrategy(conn, MlbRoto(), None, BrokerFalso(),
                               {"enabled": True}, None, odds=None)
     assert asyncio.run(est.scan_and_execute()) == []
+
+
+# --- El ERA es un extra, no un requisito ------------------------------------
+
+class HttpRoto:
+    """statsapi respondiendo 406 solo en /people, como el droplet."""
+    def __init__(self): self.pedidos = []
+    async def get_json(self, url, params=None, headers=None):
+        self.pedidos.append(url)
+        if "people" in url:
+            raise RuntimeError("Client error '406 Not Acceptable'")
+        if "schedule" in url:
+            return {"dates": [{"games": [{
+                "gameDate": "2026-08-28T22:40:00Z",
+                "teams": {
+                    "away": {"team": {"name": "New York Yankees"},
+                             "probablePitcher": {"id": 1, "fullName": "A"}},
+                    "home": {"team": {"name": "Tampa Bay Rays"},
+                             "probablePitcher": {"id": 2, "fullName": "B"}}}}]}]}
+        return {}
+
+
+def test_los_juegos_salen_aunque_falle_el_era():
+    """El 406 del droplet se movió de /schedule a /people. El ERA del
+    abridor solo afina el modelo —sin él se opina con la pitagórica—, así
+    que no puede tumbar el calendario entero. Es el mismo fallo de esta
+    semana un nivel más abajo: una API secundaria callando a toda una
+    estrategia."""
+    import asyncio
+
+    from pmbot.data.sports import MlbClient
+
+    http = HttpRoto()
+    juegos = asyncio.run(MlbClient(http).juegos("2026-08-28"))
+
+    assert len(juegos) == 1
+    assert juegos[0].local == "Tampa Bay Rays"
+    assert juegos[0].pitcher_local is not None
+    assert juegos[0].pitcher_local.era is None      # sin ERA, pero existe
+
+
+def test_el_era_se_pide_en_lotes_chicos():
+    """13 IDs de una vez daban 406 y 5 pasaban."""
+    import asyncio
+
+    from pmbot.data.sports import MlbClient
+
+    class HttpCuenta:
+        def __init__(self): self.lotes = []
+        async def get_json(self, url, params=None, headers=None):
+            self.lotes.append((params or {}).get("personIds", "").split(","))
+            return {"people": []}
+
+    http = HttpCuenta()
+    asyncio.run(MlbClient(http).eras([str(i) for i in range(13)]))
+    assert len(http.lotes) == 3
+    assert all(len(l) <= 6 for l in http.lotes), http.lotes
