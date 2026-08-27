@@ -113,7 +113,12 @@ def build_app(cfg: Config) -> App:
         sports_value=SportsValueStrategy(
             conn, MlbClient(http), GammaClient(http), broker,
             strategies_cfg.get("sports_value") or {}, MarketStore(conn),
-            odds=OddsClient(http, cfg.odds_api_key)),
+            odds=OddsClient(
+                http, cfg.odds_api_key,
+                cache_segundos=float(
+                    (cfg.raw.get("odds") or {}).get("cache_horas", 2)) * 3600,
+                reserva_creditos=int(
+                    (cfg.raw.get("odds") or {}).get("reserva_creditos", 1000)))),
         ladder_arb=LadderArbStrategy(
             conn, clob, GammaClient(http), broker,
             strategies_cfg.get("ladder_arb") or {}, MarketStore(conn)),

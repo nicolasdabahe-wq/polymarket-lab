@@ -112,9 +112,19 @@ def consenso(eventos: list[dict]) -> list[LineaJuego]:
 
 
 class OddsClient:
-    def __init__(self, http: HttpClient, api_key: str | None) -> None:
+    def __init__(self, http: HttpClient, api_key: str | None,
+                 cache_segundos: float = CACHE_SEGUNDOS,
+                 reserva_creditos: int = 500) -> None:
         self.http = http
         self.api_key = api_key
+        self.cache_segundos = float(cache_segundos)
+        # Colchón: por debajo de esto se deja de consultar. Sin él, un mes
+        # con muchos deportes vacía el plan y los deportes dejan de operar
+        # en silencio — que es exactamente como sports_value pasó días
+        # muda por un 406 sin que nadie lo notara.
+        self.reserva_creditos = int(reserva_creditos)
+        self.creditos_restantes: int | None = None
+        self.creditos_usados: int | None = None
         self._cache: dict[str, tuple[float, list[LineaJuego]]] = {}
 
     @property
@@ -126,10 +136,16 @@ class OddsClient:
         if not self.enabled:
             return []
         hit = self._cache.get(deporte)
-        if hit and time.monotonic() - hit[0] < CACHE_SEGUNDOS:
+        if hit and time.monotonic() - hit[0] < self.cache_segundos:
             return hit[1]
+        if (self.creditos_restantes is not None
+                and self.creditos_restantes <= self.reserva_creditos):
+            log.warning("odds: quedan %d créditos (reserva %d): no consulto "
+                        "%s", self.creditos_restantes, self.reserva_creditos,
+                        deporte)
+            return hit[1] if hit else []
         try:
-            crudo = await self.http.get_json(
+            crudo, cabeceras = await self.http.get_json_con_cabeceras(
                 f"{ODDS_BASE}/sports/{deporte}/odds",
                 params={"apiKey": self.api_key, "regions": "eu",
                         "markets": "h2h", "oddsFormat": "decimal"})
@@ -137,11 +153,26 @@ class OddsClient:
             log.warning("The Odds API falló (%s); sigo con el modelo propio",
                         exc)
             return hit[1] if hit else []
+        self._anotar_saldo(cabeceras)
         resultado = consenso(crudo if isinstance(crudo, list) else [])
         self._cache[deporte] = (time.monotonic(), resultado)
-        log.info("odds: %d juegos de %s con línea sharp/consenso",
-                 len(resultado), deporte)
+        log.info("odds: %d juegos de %s con línea sharp/consenso "
+                 "(quedan %s créditos)", len(resultado), deporte,
+                 self.creditos_restantes)
         return resultado
+
+    def _anotar_saldo(self, cabeceras: dict[str, str]) -> None:
+        """Guarda el saldo que informa la API en cada respuesta."""
+        bajo = {k.lower(): v for k, v in (cabeceras or {}).items()}
+        for clave, destino in (("x-requests-remaining", "creditos_restantes"),
+                               ("x-requests-used", "creditos_usados")):
+            valor = bajo.get(clave)
+            if valor is None:
+                continue
+            try:
+                setattr(self, destino, int(float(valor)))
+            except (TypeError, ValueError):
+                pass
 
 
 # Palabras que no identifican a un equipo (adornos de nombre oficial).

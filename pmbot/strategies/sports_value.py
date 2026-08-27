@@ -229,6 +229,9 @@ class SportsValueStrategy:
         # crédito de The Odds API por llamada: con cache de 6h y tres ligas
         # más MLB son ~480/mes, dentro del tier gratis de 500.
         self.ligas_futbol = list(cfg.get("soccer_leagues") or [])
+        # Ligas cuyos mercados de Polymarket se titulan «A vs B»: cada una
+        # es {clave: <clave de The Odds API>, tag: <tag de Polymarket>}.
+        self.ligas_vs = [dict(x) for x in (cfg.get("ligas_vs") or [])]
 
     async def _fuerzas(self) -> dict[str, float]:
         temporada = datetime.now(timezone.utc).year
@@ -244,6 +247,7 @@ class SportsValueStrategy:
         código no probaría nada sobre el código que opera."""
         self._traza = traza
         self._simular = simular
+        self._tags_frescos: set[str] = set()
         if not self.enabled:
             self._nota("la estrategia está apagada en config.yaml")
             return []
@@ -302,6 +306,16 @@ class SportsValueStrategy:
         except Exception as exc:
             log.warning("fútbol no disponible: %s", exc)
             self._nota(f"fútbol fuera de juego: {exc}")
+        # Cada liga se cae sola: un tenis sin datos no puede callar al
+        # baloncesto, que es el error que ya nos costó días de silencio.
+        for liga in self.ligas_vs:
+            try:
+                ejecutadas.extend(await self._escanear_liga_vs(
+                    liga.get("clave", ""), liga.get("tag", ""), ahora))
+            except Exception as exc:
+                log.warning("liga %s no disponible: %s",
+                            liga.get("clave"), exc)
+                self._nota(f"{liga.get('clave')} fuera de juego: {exc}")
         return ejecutadas
 
     # ---------- fútbol con línea sharp ----------
@@ -367,6 +381,143 @@ class SportsValueStrategy:
                     if desc:
                         hechas.append(desc)
         return hechas
+
+    async def _refrescar_tag(self, tag: str) -> None:
+        """Trae los mercados de un tag al cache, una sola vez por corrida.
+
+        El escaneo diario guarda los 600 de más volumen y un partido suelto
+        no entra: sin esto la consulta local encuentra cero por muchas
+        líneas que haya al lado."""
+        if not tag or self.market_store is None:
+            return
+        if tag in getattr(self, "_tags_frescos", set()):
+            return
+        try:
+            frescos = await self.gamma.fetch_by_tag(tag, limit=300)
+            if frescos:
+                self.market_store.upsert_markets(frescos)
+        except Exception as exc:
+            log.warning("no pude refrescar mercados de '%s': %s", tag, exc)
+        self._tags_frescos = getattr(self, "_tags_frescos", set()) | {tag}
+
+    async def _escanear_liga_vs(self, clave: str, tag: str,
+                                ahora: datetime) -> list[str]:
+        """Ligas cuyos mercados de Polymarket se titulan «A vs B».
+
+        Es la ruta de tenis, baloncesto, hockey y rugby: hay línea de casas
+        profesionales y el mercado nombra a los dos participantes. El fútbol
+        no pasa por aquí porque allí Polymarket abre un mercado por equipo
+        («Will X win on FECHA?») en vez de uno con dos salidas.
+        """
+        if not (clave and self.odds is not None
+                and getattr(self.odds, "enabled", False)):
+            return []
+        try:
+            lineas = await self.odds.lineas(clave)
+        except Exception as exc:
+            log.debug("liga %s sin líneas: %s", clave, exc)
+            return []
+        if not lineas:
+            self._nota(f"{clave}: la casa no tiene partidos ahora")
+            return []
+        await self._refrescar_tag(tag)
+        filas = self.conn.execute(
+            """SELECT * FROM markets WHERE active = 1 AND category = 'sports'
+               AND question LIKE '%vs%'""").fetchall()
+        # Índice por pareja de participantes: un mercado por partido.
+        por_pareja: dict[frozenset, sqlite3.Row] = {}
+        for fila in filas:
+            try:
+                salidas = _json.loads(
+                    (_json.loads(fila["raw"] or "{}") or {}).get("outcomes")
+                    or "[]")
+            except (ValueError, TypeError):
+                salidas = []
+            par = leer_partido(fila["question"], salidas or None)
+            if par:
+                por_pareja.setdefault(frozenset(par), fila)
+        hechas: list[str] = []
+        emparejados = 0
+        for linea in lineas:
+            try:
+                inicio = datetime.fromisoformat(
+                    linea.inicio_utc.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if inicio - ahora < timedelta(minutes=self.minutos_antes):
+                continue
+            local, visitante = apodo(linea.local), apodo(linea.visitante)
+            fila = por_pareja.get(frozenset((local, visitante)))
+            if fila is None:
+                continue
+            emparejados += 1
+            desc = await self._apostar_vs(
+                fila, {local: linea.prob_local,
+                       visitante: linea.prob_visitante},
+                f"línea sharp {clave} ({linea.casas} casas)", inicio,
+                etq=f"{clave}: {linea.visitante} @ {linea.local}")
+            if desc:
+                hechas.append(desc)
+        self._nota(f"{clave}: {len(lineas)} partidos con línea, "
+                   f"{emparejados} emparejados con Polymarket")
+        return hechas
+
+    async def _apostar_vs(self, fila: sqlite3.Row, probs: dict[str, float],
+                          fuente: str, inicio: datetime,
+                          etq: str = "") -> str | None:
+        """Apuesta el lado con ventaja de un mercado «A vs B»."""
+        tokens = _json.loads(fila["clob_token_ids"] or "[]")
+        try:
+            salidas = _json.loads(
+                (_json.loads(fila["raw"] or "{}") or {}).get("outcomes") or "[]")
+        except (ValueError, TypeError):
+            return None
+        if len(tokens) != 2 or len(salidas) != 2:
+            return None
+        # Escudo contra pagar de más en las copias, haya apuesta o no.
+        primera = probs.get(apodo(salidas[0]))
+        if primera is not None:
+            self._guardar_sharp(fila["condition_id"], primera, fuente)
+        mejor = await self._mejor_lado(tokens, salidas, probs)
+        if mejor is False or not mejor:
+            self._nota(f"{etq}: sin precio usable en el libro")
+            return None
+        if mejor[0] < self.min_edge:
+            self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
+                       f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "
+                       f"por debajo de {self.min_edge:.0%} [{fuente}]")
+            return None
+        ventaja, idx, salida, prob, ask = mejor
+        usdc = kelly_usdc(self.broker.equity(), ask, prob / ask - 1.0,
+                          self.kelly_fraction, self.min_trade_usdc,
+                          self.max_trade_pct)
+        if usdc <= 0:
+            self._nota(f"{etq}: ventaja {ventaja:+.1%} pero Kelly no llega "
+                       f"al mínimo de ${self.min_trade_usdc:.0f}")
+            return None
+        razon = (f"{fuente}: {salida} vale {prob:.0%} y el libro pide "
+                 f"{ask:.0%} (ventaja {ventaja:+.0%})")
+        if getattr(self, "_simular", False):
+            self._nota(f"{etq}: APOSTARÍA {salida} @ {ask:.3f} ${usdc:.2f} "
+                       f"(ventaja {ventaja:+.1%}) [{fuente}]")
+            return None
+        fill = await self.broker.execute(
+            f"sharp:{fila['condition_id']}:{idx}",
+            OrderRequest(
+                strategy=self.name, condition_id=fila["condition_id"],
+                category="sports", token_id=tokens[idx], outcome=salida,
+                outcome_index=idx, side="BUY", size=usdc / ask,
+                price=min(ask * 1.02, 0.99), reason=razon,
+                strategy_budget_pct=self.budget_pct,
+                days_to_resolution=max(
+                    (inicio - datetime.now(timezone.utc)).total_seconds()
+                    / 86400, 0.0),
+                meta={"question": fila["question"], "sharp": prob,
+                      "ask": ask}))
+        if fill.status == "FILLED":
+            log.info("SPORTS SHARP: %s", razon)
+            return razon
+        return None
 
     def _guardar_sharp(self, condition_id: str, prob_first: float,
                        fuente: str) -> None:
@@ -471,6 +622,29 @@ class SportsValueStrategy:
         if getattr(self, "_traza", None) is not None:
             self._traza.append(texto)
 
+    async def _mejor_lado(self, tokens: list[str], salidas: list[str],
+                          probs: dict[str, float]):
+        """El lado con más ventaja de un mercado de dos salidas.
+
+        Devuelve (ventaja, idx, salida, prob, ask), None si ningún lado tiene
+        precio usable, o False si las salidas no son los participantes que
+        esperábamos — que no es lo mismo y no se puede tratar igual: sin
+        saber de quién habla cada salida, cualquier apuesta sería a ciegas.
+        """
+        mejor = None
+        for idx, salida in enumerate(salidas):
+            prob = probs.get(apodo(salida))
+            if prob is None:
+                return False
+            libro = await self.broker.clob.order_book(tokens[idx])
+            ask = libro.best_ask
+            if ask is None or ask <= 0.02 or ask > self.max_entry:
+                continue
+            ventaja = prob - ask
+            if mejor is None or ventaja > mejor[0]:
+                mejor = (ventaja, idx, salida, prob, ask)
+        return mejor
+
     async def _evaluar(self, juego: Any, fuerzas: dict[str, float],
                        ahora: datetime) -> str | None:
         visitante, local = apodo(juego.visitante), apodo(juego.local)
@@ -550,22 +724,10 @@ class SportsValueStrategy:
         self._guardar_sharp(mercado["condition_id"],
                             p_local if apodo(salidas[0]) == local
                             else 1.0 - p_local, fuente)
-        mejor = None
-        for idx, salida in enumerate(salidas):
-            clave = apodo(salida)
-            if clave == local:
-                prob = p_local
-            elif clave == visitante:
-                prob = 1.0 - p_local
-            else:
-                return None      # los outcomes no son los equipos: no opinar
-            libro = await self.broker.clob.order_book(tokens[idx])
-            ask = libro.best_ask
-            if ask is None or ask <= 0.02 or ask > self.max_entry:
-                continue
-            ventaja = prob - ask
-            if mejor is None or ventaja > mejor[0]:
-                mejor = (ventaja, idx, salida, prob, ask)
+        mejor = await self._mejor_lado(
+            tokens, salidas, {local: p_local, visitante: 1.0 - p_local})
+        if mejor is False:
+            return None          # los outcomes no son los equipos: no opinar
         if not mejor:
             self._nota(f"{etq}: sin precio usable (libro vacío o por encima "
                        f"de {self.max_entry:.2f}) [{fuente}]")

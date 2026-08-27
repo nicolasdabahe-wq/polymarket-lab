@@ -34,6 +34,19 @@ class HttpClient:
         resp = await self._request("GET", url, params=params, headers=headers)
         return resp.json()
 
+    async def get_json_con_cabeceras(
+            self, url: str, params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+    ) -> tuple[Any, dict[str, str]]:
+        """Como get_json pero devolviendo también las cabeceras.
+
+        The Odds API informa del saldo de créditos en `x-requests-remaining`
+        y sin leerlo el bot gastaría el plan a ciegas: cuando se acaben, los
+        deportes dejarían de operar sin que nadie se entere.
+        """
+        resp = await self._request("GET", url, params=params, headers=headers)
+        return resp.json(), dict(resp.headers)
+
     async def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
         resp = await self._request("GET", url, params=params)
         return resp.text

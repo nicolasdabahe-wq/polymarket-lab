@@ -13,6 +13,16 @@ data:
   # Ignorar mercados con liquidez menor a esto (USDC).
   min_liquidity: 500.0
 
+# Líneas de casas profesionales (The Odds API). Plan 20K desde el
+# 2026-08-27: 20.000 créditos/mes, 1 crédito por consulta de liga.
+# Con 24 claves configuradas y cache de 2 h son ~8.640 al mes, menos de la
+# mitad. La reserva es el colchón: por debajo de ella se deja de consultar,
+# para que el plan no se agote en silencio y los deportes queden mudos sin
+# que nadie se entere.
+odds:
+  cache_horas: 2
+  reserva_creditos: 1000
+
 smart_money:
   # Cuántas filas del leaderboard traer por ventana.
   leaderboard_limit: 50
@@ -357,8 +367,34 @@ strategies:
     # más MLB son ~480/mes de los 500 del tier gratis.
     soccer_leagues:
       - soccer_epl
-      - soccer_mexico_ligamx
+      - soccer_spain_la_liga
       - soccer_italy_serie_a
+      - soccer_germany_bundesliga
+      - soccer_france_ligue_one
+      - soccer_mexico_ligamx
+      - soccer_usa_mls
+      - soccer_brazil_campeonato
+      - soccer_argentina_primera_division
+      - soccer_portugal_primeira_liga
+      - soccer_netherlands_eredivisie
+      - soccer_efl_champ
+      - soccer_conmebol_copa_libertadores
+      - soccer_conmebol_copa_sudamericana
+      - soccer_concacaf_leagues_cup
+    # Ligas donde Polymarket titula el ganador «A vs B» (o «Torneo: A vs B»)
+    # en un solo mercado de dos salidas, en vez de abrir uno por equipo.
+    # `tag` es el tag de Polymarket del que hay que traerse los mercados.
+    # Medido el 2026-08-27 sobre los mercados reales: 85 ganadores de partido
+    # en tenis, 72 en baloncesto, 46 en béisbol. Antes se miraban 35.
+    ligas_vs:
+      - {clave: basketball_wnba, tag: basketball}
+      - {clave: tennis_wta_monterrey_open, tag: tennis}
+      - {clave: icehockey_liiga, tag: hockey}
+      - {clave: rugbyleague_nrl, tag: rugby}
+      - {clave: mma_mixed_martial_arts, tag: mma}
+      - {clave: baseball_milb, tag: baseball}
+      - {clave: baseball_kbo, tag: baseball}
+      - {clave: baseball_npb, tag: baseball}
   # Valor en cripto: modelo de opciones (precio spot + volatilidad real de
   # Coinbase) vs la probabilidad implícita del mercado de Polymarket.
   crypto_value:
