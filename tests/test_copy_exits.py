@@ -94,3 +94,41 @@ def test_cada_wallet_se_juzga_por_su_propia_foto(tmp_path):
     poner(conn, "0xchica", 2)
     assert est._snapshot_prueba_salida("0xballena") is False
     assert est._snapshot_prueba_salida("0xchica") is True
+
+
+# --- Las salidas se pueden apagar, y por ahora lo están ---------------------
+
+def test_con_salidas_apagadas_no_se_vende_nada(tmp_path):
+    """Medición, no precaución. Sobre las 65 posiciones cerradas hasta el
+    2026-08-26, aguantar habría dado -$141 y salir dio -$213: las salidas
+    costaron $72. La ganadora media dejó $8.76 cuando aguantarla daba
+    $14.91. Y el 27, sin nadie vendiendo, dos posiciones llegaron al final y
+    pagaron +$31.70 y +$48.53."""
+    import asyncio
+
+    from pmbot.db import connect
+    from pmbot.strategies import CopyTradingStrategy
+
+    class BrokerQueGrita:
+        async def execute(self, oid, req):
+            raise AssertionError("con salidas_activas=false no se vende")
+
+    conn = connect(tmp_path / "so.db")
+    est = CopyTradingStrategy(conn, BrokerQueGrita(),
+                              {"salidas_activas": False})
+    with conn:
+        conn.execute(
+            """INSERT INTO paper_positions (strategy, condition_id, outcome,
+               outcome_index, token_id, question, category, size, avg_price,
+               meta, opened_at, updated_at)
+               VALUES ('copy_trading','0xm','Yes',0,'t','Q','sports',10,0.50,
+                       '{"copied_wallet":"0xw"}','x','x')""")
+    assert asyncio.run(est.check_exits()) == []
+
+
+def test_la_config_de_produccion_las_tiene_apagadas():
+    """Si alguien las reactiva, que sea a sabiendas y con datos nuevos."""
+    from pmbot.config import load_config
+    cfg = load_config("config.yaml").section("strategies")["copy_trading"]
+    assert cfg["enabled"] is True
+    assert cfg["salidas_activas"] is False

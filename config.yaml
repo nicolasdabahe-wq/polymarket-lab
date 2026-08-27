@@ -233,7 +233,14 @@ strategies:
     min_usdc_per_trade: 12
     scan_top_markets: 300
   copy_trading:
-    # APAGADA el 2026-08-27. De los $348 perdidos hasta esa fecha, $360.91
+    # REENCENDIDA el 2026-08-28 con los tres arreglos de la semana puestos:
+    # la foto recortada que liquidaba posiciones vivas, la caída de precio
+    # que descalifica la copia, y el piso de 0.35. Se apagó el 27 porque
+    # llevaba -$360 de los -$348 totales; lo que la devuelve no son las
+    # ganas sino el único dato a favor que hay: el 27, sin nadie vendiendo,
+    # dos posiciones llegaron a la resolución y pagaron +$31.70 y +$48.53.
+    #
+    # Historia anterior, por si hay que apagarla otra vez: De los $348 perdidos hasta esa fecha, $360.91
     # son suyos: 77 cierres, 44% de acierto. crypto_value, en paralelo, iba
     # a -$4.43 con 58%. No es un techo ni un freno: es dejar de alimentar
     # la única parte que pierde mientras se diagnostica por qué. Volver a
@@ -242,7 +249,12 @@ strategies:
     # Ojo al reactivar: con enabled=false, check_exits tampoco corre. Las
     # posiciones abiertas que queden se liquidan igual al resolverse, que va
     # por el scheduler y no por la estrategia.
-    enabled: false
+    enabled: true
+    # Las salidas quedan apagadas: ver la nota larga en check_exits. Sobre
+    # 65 posiciones cerradas, salir costó $72 contra aguantar. Con ventana
+    # de 24 h una posición se resuelve hoy, así que salir solo paga el
+    # diferencial dos veces.
+    salidas_activas: false
     budget_pct: 1.0            # sin techo por estrategia (cartera abierta)
     # El tamaño ya NO es fijo: escala con la ventaja estimada (sizing.py).
     # Kelly fraccionado sobre el retorno esperado, que sale del ROI que dio

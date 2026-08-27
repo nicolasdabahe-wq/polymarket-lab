@@ -245,6 +245,8 @@ class CopyTradingStrategy:
         # cuánto puede envejecer antes de dejar de ser prueba de nada.
         self.snapshot_limite = int(cfg.get("snapshot_positions_limit", 25))
         self.snapshot_max_horas = float(cfg.get("snapshot_max_horas", 12.0))
+        # ¿Se vende cuando la wallet copiada sale? Ver la nota en check_exits.
+        self.salidas_activas = bool(cfg.get("salidas_activas", True))
         self.max_entry = float(cfg.get("max_entry_price", 0.80))
         # Dimensionamiento por ventaja (ver sizing.py).
         self.kelly_fraction = float(cfg.get("kelly_fraction", 0.25))
@@ -604,8 +606,25 @@ class CopyTradingStrategy:
         return edad <= self.snapshot_max_horas
 
     async def check_exits(self) -> list[str]:
-        """Vende posiciones cuya wallet copiada salió o redujo >50%."""
-        if not self.enabled:
+        """Vende posiciones cuya wallet copiada salió o redujo >50%.
+
+        Apagado desde el 2026-08-28, y no por precaución sino por medición.
+        Sobre las 65 posiciones cerradas hasta el 2026-08-26, aguantar hasta
+        la resolución habría dado -$141 y salir dio -$213: las salidas
+        costaron $72. La ganadora media dejó $8.76 cuando aguantarla daba
+        $14.91 sobre la posición media. Y el 27, con la estrategia apagada y
+        nadie vendiendo, dos posiciones fueron hasta el final y pagaron
+        +$31.70 y +$48.53.
+
+        Con la ventana de 24 horas el argumento se refuerza solo: una
+        posición que se resuelve hoy no da tiempo a que salir compense el
+        diferencial que cuesta salir.
+
+        Lo que lo revertiría: que aguantando aparezcan pérdidas totales que
+        una salida a tiempo habría recortado, y que sumen más de lo que
+        cuesta el diferencial. Eso se ve en la perdedora media de `analisis`.
+        """
+        if not self.enabled or not self.salidas_activas:
             return []
         exits = []
         today = datetime.now(timezone.utc).date().isoformat()
