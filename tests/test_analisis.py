@@ -388,3 +388,55 @@ def test_sin_prueba_no_es_lo_mismo_que_sin_problema():
     assert a.esperado_por_accion < 0                 # ...pero tampoco es sano
     assert "contra la entrada no hay prueba" in a.diagnostico
     assert "sin prueba no es lo mismo que sin problema" in a.diagnostico
+
+
+# --- ¿Se despega Polymarket de las casas? ------------------------------------
+
+def _comp(conn, liga, ventaja, dia="2026-08-27T10:00:00"):
+    with conn:
+        conn.execute(
+            """INSERT INTO comparaciones_sharp (created_at, liga,
+               condition_id, outcome, prob_sharp, ask, ventaja)
+               VALUES (?,?,'0xm','X',0.5,?,?)""",
+            (dia, liga, 0.5 - ventaja, ventaja))
+
+
+def test_resumen_despegues_cuenta_lo_que_importa(tmp_path):
+    """LA pregunta del negocio deportivo. El 2026-08-27 un barrido dio 46
+    comparaciones con desviación media de 0,93 puntos y ninguna sobre 3 —
+    pero un barrido suelto no vale: los despegues duran minutos y hay que
+    contarlos a lo largo del día."""
+    from pmbot.db import connect
+    from pmbot.monitor.analisis import resumen_despegues
+
+    conn = connect(tmp_path / "d.db")
+    for v in (0.001, -0.004, 0.012, 0.022, -0.041):
+        _comp(conn, "línea sharp soccer_epl (25 casas)", v)
+    _comp(conn, "línea sharp basketball_wnba (16 casas)", 0.095)
+
+    r = resumen_despegues(conn)
+    assert r["n"] == 6
+    assert r["sobre_8"] == 1 and r["sobre_3"] == 1
+    assert round(r["maxima"], 3) == 0.095
+    # La liga se limpia del número de casas para poder agrupar.
+    assert set(r["ligas"]) == {"soccer_epl", "basketball_wnba"}
+    assert r["ligas"]["basketball_wnba"] == (1, 0.095)
+
+
+def test_resumen_despegues_respeta_la_ventana(tmp_path):
+    from pmbot.db import connect
+    from pmbot.monitor.analisis import resumen_despegues
+
+    conn = connect(tmp_path / "d2.db")
+    _comp(conn, "línea sharp soccer_epl (25 casas)", 0.09,
+          dia="2026-08-20T10:00:00")
+    _comp(conn, "línea sharp soccer_epl (25 casas)", 0.01,
+          dia="2026-08-27T10:00:00")
+    assert resumen_despegues(conn)["n"] == 2
+    assert resumen_despegues(conn, "2026-08-25T00:00:00")["n"] == 1
+
+
+def test_resumen_despegues_sin_datos(tmp_path):
+    from pmbot.db import connect
+    from pmbot.monitor.analisis import resumen_despegues
+    assert resumen_despegues(connect(tmp_path / "d3.db")) == {"n": 0}

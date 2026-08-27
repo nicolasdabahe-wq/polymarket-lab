@@ -482,6 +482,8 @@ class SportsValueStrategy:
         if mejor is False or not mejor:
             self._nota(f"{etq}: sin precio usable en el libro")
             return None
+        self._anotar_comparacion(fuente, fila["condition_id"], mejor[2],
+                                 mejor[3], mejor[4])
         if mejor[0] < self.min_edge:
             self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
                        f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "
@@ -518,6 +520,28 @@ class SportsValueStrategy:
             log.info("SPORTS SHARP: %s", razon)
             return razon
         return None
+
+    def _anotar_comparacion(self, liga: str, condition_id: str,
+                            salida: str, prob: float, ask: float) -> None:
+        """Deja constancia de cada comparación línea-vs-Polymarket.
+
+        Un barrido suelto no dice si el negocio existe: los despegues duran
+        minutos, así que lo que cuenta es la serie a lo largo del día. Sin
+        registrarlos, la única forma de saberlo sería mirar la pantalla en el
+        momento justo.
+        """
+        if getattr(self, "_simular", False):
+            return
+        try:
+            with self.conn:
+                self.conn.execute(
+                    """INSERT INTO comparaciones_sharp (created_at, liga,
+                       condition_id, outcome, prob_sharp, ask, ventaja)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                     liga, condition_id, salida, prob, ask, prob - ask))
+        except Exception as exc:      # nunca por un registro se deja de operar
+            log.debug("no pude anotar la comparación: %s", exc)
 
     def _guardar_sharp(self, condition_id: str, prob_first: float,
                        fuente: str) -> None:
@@ -579,6 +603,8 @@ class SportsValueStrategy:
         if not mejor:
             self._nota(f"{etq}: sin precio usable en el libro")
             return None
+        self._anotar_comparacion(fuente, fila["condition_id"], mejor[2],
+                                 mejor[3], mejor[4])
         if mejor[0] < self.min_edge:
             self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
                        f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "
@@ -732,6 +758,8 @@ class SportsValueStrategy:
             self._nota(f"{etq}: sin precio usable (libro vacío o por encima "
                        f"de {self.max_entry:.2f}) [{fuente}]")
             return None
+        self._anotar_comparacion(fuente, mercado["condition_id"], mejor[2],
+                                 mejor[3], mejor[4])
         if mejor[0] < self.min_edge:
             self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
                        f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "

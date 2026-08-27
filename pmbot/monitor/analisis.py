@@ -345,3 +345,40 @@ def asimetria(cerradas: list[Cerrada]) -> Asimetria:
         precio_medio=(sum(c.invertido for c in cerradas) / acciones
                       if acciones > 0 else 0.0),
     )
+
+
+def resumen_despegues(conn, desde: str | None = None) -> dict:
+    """¿Se despega Polymarket de las casas profesionales, y cuánto?
+
+    LA pregunta del negocio deportivo. Un barrido suelto no la responde: los
+    despegues duran minutos, así que lo que cuenta es la serie del día. El
+    2026-08-27, 46 comparaciones en un instante dieron desviación media de
+    0,93 puntos y ninguna por encima de 3 — con eso no se decide nada.
+
+    Devuelve las cifras crudas; interpretarlas es de quien lee.
+    """
+    filtro, args = "", []
+    if desde:
+        filtro, args = " WHERE created_at >= ?", [desde]
+    filas = conn.execute(
+        f"SELECT liga, ventaja FROM comparaciones_sharp{filtro}", args
+    ).fetchall()
+    if not filas:
+        return {"n": 0}
+    ventajas = sorted(r["ventaja"] for r in filas)
+    n = len(ventajas)
+    por_liga: dict[str, list[float]] = {}
+    for r in filas:
+        # La fuente trae la liga y el número de casas: nos quedamos la liga.
+        liga = (r["liga"] or "").split(" (")[0].replace("línea sharp ", "")
+        por_liga.setdefault(liga or "?", []).append(r["ventaja"])
+    return {
+        "n": n,
+        "media_abs": sum(abs(v) for v in ventajas) / n,
+        "maxima": ventajas[-1],
+        "p95": ventajas[int(n * 0.95)] if n > 1 else ventajas[-1],
+        "sobre_3": sum(1 for v in ventajas if v >= 0.03),
+        "sobre_5": sum(1 for v in ventajas if v >= 0.05),
+        "sobre_8": sum(1 for v in ventajas if v >= 0.08),
+        "ligas": {k: (len(v), max(v)) for k, v in sorted(por_liga.items())},
+    }

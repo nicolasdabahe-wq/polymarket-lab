@@ -575,6 +575,30 @@ async def cmd_deportes(app: App) -> None:
         print("\n   📏 Sin partidos con línea sharp: no hay forma de saber "
               "cuánto se equivoca el modelo propio.")
 
+    # La pregunta del negocio: ¿se despega Polymarket de las casas? Un
+    # barrido suelto no la responde — los despegues duran minutos. Esto es
+    # la serie acumulada de todo lo que el bot lleva comparando.
+    from .monitor.analisis import resumen_despegues
+    r = resumen_despegues(app.conn)
+    print()
+    if not r["n"]:
+        print("   📊 Todavía no hay comparaciones registradas. El bot las va "
+              "anotando cada 20 minutos; mañana habrá con qué juzgar.")
+        return
+    print(f"   📊 DESPEGUES — {r['n']} comparaciones acumuladas contra las "
+          f"casas profesionales")
+    print(f"      desviación media {r['media_abs']:.2%} | máxima "
+          f"{r['maxima']:+.2%} | p95 {r['p95']:+.2%}")
+    print(f"      por encima de 3%: {r['sobre_3']}   de 5%: {r['sobre_5']}   "
+          f"de 8% (umbral): {r['sobre_8']}")
+    if r["sobre_3"] == 0 and r["n"] >= 200:
+        print("      Con esta muestra, Polymarket no se despega lo bastante "
+              "como para que haya negocio en el ganador de partido.")
+    flojas = [f"{k} ({n}, máx {mx:+.1%})"
+              for k, (n, mx) in r["ligas"].items() if mx >= 0.03]
+    if flojas:
+        print("      Ligas con algún despegue de 3%+: " + ", ".join(flojas))
+
 
 async def cmd_live_check(app: App) -> None:
     from .execution import LiveBroker

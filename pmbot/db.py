@@ -109,6 +109,24 @@ CREATE TABLE IF NOT EXISTS briefings (
 -- Líneas sharp (Pinnacle y compañía) por mercado, de-vigueadas. Las
 -- escribe la estrategia deportiva al escanear y las leen las demás como
 -- referencia de precio justo: un escudo contra pagar de más.
+-- Cada vez que se compara una línea de casas profesionales contra el precio
+-- de Polymarket. Existe porque un barrido suelto no prueba nada: los
+-- despegues duran minutos y hay que contarlos a lo largo del día. El
+-- 2026-08-27, 46 comparaciones en un momento dado dieron una desviación
+-- media de 0,93 puntos y ninguna por encima de 3 — con eso no se decide si
+-- el negocio existe, hace falta la serie completa.
+CREATE TABLE IF NOT EXISTS comparaciones_sharp (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT NOT NULL,
+    liga         TEXT NOT NULL,
+    condition_id TEXT NOT NULL,
+    outcome      TEXT,
+    prob_sharp   REAL NOT NULL,     -- lo que dicen las casas
+    ask          REAL NOT NULL,     -- lo que pide Polymarket
+    ventaja      REAL NOT NULL      -- prob_sharp - ask, en tanto por uno
+);
+CREATE INDEX IF NOT EXISTS idx_comp_dia ON comparaciones_sharp(created_at);
+
 CREATE TABLE IF NOT EXISTS sharp_lines (
     condition_id TEXT PRIMARY KEY,
     prob_first   REAL NOT NULL,     -- prob. del outcome de índice 0
