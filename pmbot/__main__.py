@@ -486,6 +486,15 @@ async def cmd_trades(app: App) -> None:
                       f"(${r['fill_usdc']:.2f})")
             if r["realized_pnl"] is not None:
                 detail += f" PnL {r['realized_pnl']:+.2f}"
+            # El riesgo juzga el precio LÍMITE, que es una estimación previa;
+            # el CLOB llena a lo que haya en el libro. Si el hueco entre los
+            # dos es grande, la orden que se aprobó no es la que se ejecutó
+            # — y ninguna regla de precio miró la de verdad.
+            lim = r["limit_price"]
+            if (lim and r["side"] == "BUY" and r["fill_price"]
+                    and abs(r["fill_price"] - lim) > 0.02):
+                detail += (f"  ⚠️ pedido a {lim:.3f}, llenó a "
+                           f"{r['fill_price']:.3f}")
         else:
             detail = r["reject_reason"] or ""
         print(f"  {r['created_at'][5:16]} [{r['strategy']:<12}] {r['side']:<6} "
