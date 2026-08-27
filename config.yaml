@@ -244,6 +244,14 @@ strategies:
     snapshot_positions_limit: 25
     snapshot_max_horas: 12.0
     max_slippage_pct: 0.10    # no copiar si el precio subió >10% desde su entrada
+    # Cuánta probabilidad puede haber perdido el mercado desde que entró la
+    # wallet antes de que deje de ser su apuesta, en PUNTOS. El control solo
+    # miraba hacia arriba: una bajada se daba por buena ("está más barato").
+    # En un binario el precio ES la probabilidad, así que 18 puntos menos no
+    # son descuento, son que la apuesta ya va perdiendo. Caso del 2026-08-26:
+    # dos wallets top compraron Up a 0.522 en un mercado de Bitcoin de 15
+    # minutos, el libro daba 0.345, entró y se llenó a 0.223. Perdido entero.
+    max_caida_puntos: 0.10
     # Escudo sharp: no copiar pagando más que la línea de las casas
     # profesionales + esta tolerancia. La primera noche se compró NO de
     # Brentford a 0.58 con la línea en 0.535: 4,5 puntos regalados.

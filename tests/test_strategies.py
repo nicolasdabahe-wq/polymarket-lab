@@ -166,7 +166,7 @@ def test_slippage_exceeded_blocks_copy():
 
 
 def test_price_dropped_is_fine():
-    assert slippage_ok(0.40, 0.35, 0.10)
+    assert slippage_ok(0.40, 0.35, 0.10)      # 5 puntos: sigue siendo su apuesta
 
 
 def test_invalid_prices_block():
@@ -301,3 +301,42 @@ def test_freno_apagado_no_frena_a_nadie(tmp_path):
         ("redeem:copy_trading:0xm1:0", "0xm1", "REDEEM", -99.0),
     ], freno=0.0)
     assert s._wallets_frenadas_en_vivo() == set()
+
+
+# --- La caída de precio también descalifica la copia --------------------------
+
+def test_caida_grande_ya_no_es_la_misma_apuesta():
+    """El caso real del 2026-08-26. Dos wallets top compraron Up a 0.522 en
+    "Bitcoin Up or Down, 10:45PM-11:00PM ET"; para cuando el bot miró, el
+    mercado pagaba 0.345. El control solo acotaba por arriba, así que lo dejó
+    pasar por estar "más barato", y se llenó a 0.223: perdido entero.
+
+    En un mercado binario el precio ES la probabilidad. Dieciocho puntos
+    menos no son un descuento: son que la apuesta ya va perdiendo."""
+    assert not slippage_ok(0.522, 0.345, 0.10, 0.10)
+
+
+def test_caida_pequena_si_se_copia():
+    """Si cualquier bajada descalificara, el bot no copiaría casi nada: el
+    ruido normal de un libro mueve unos pocos puntos."""
+    assert slippage_ok(0.522, 0.470, 0.10, 0.10)      # 5.2 puntos
+
+
+def test_la_caida_se_mide_en_puntos_no_en_porcentaje():
+    """Caer de 0.90 a 0.80 y de 0.20 a 0.10 es la misma noticia —diez puntos—
+    aunque en porcentaje sean -11% y -50%. Medir en porcentaje dejaría pasar
+    la primera y frenaría la segunda sin razón."""
+    assert not slippage_ok(0.90, 0.78, 0.10, 0.10)    # 12 puntos
+    assert not slippage_ok(0.20, 0.08, 0.10, 0.10)    # 12 puntos
+    assert slippage_ok(0.90, 0.82, 0.10, 0.10)        # 8 puntos
+    assert slippage_ok(0.20, 0.12, 0.10, 0.10)        # 8 puntos
+
+
+def test_la_subida_sigue_frenando_igual():
+    """El control de arriba no se toca: pagar de más sigue descalificando."""
+    assert not slippage_ok(0.40, 0.46, 0.10, 0.10)
+
+
+def test_caida_desactivable():
+    """Con 0 puntos vuelve el comportamiento viejo, por si hiciera falta."""
+    assert slippage_ok(0.522, 0.345, 0.10, 0.0)

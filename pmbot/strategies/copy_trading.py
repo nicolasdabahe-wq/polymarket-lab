@@ -5,7 +5,8 @@ Entrada (sobre señales new_trade no procesadas):
 - Dispara si: una wallet de score muy alto entra fuerte (strong_score /
   strong_usdc), o >= confirm_count wallets calificadas coinciden en el mismo
   mercado y outcome.
-- No copiar si el precio ya se movió más de max_slippage_pct desde su entrada.
+- No copiar si el precio se alejó del suyo: ni arriba (max_slippage_pct,
+  pagaríamos de más) ni abajo (max_caida_puntos, ya no es la misma apuesta).
 - Tamaño: equity * base_pct_per_trade * confianza (score de la wallet líder).
 
 Consenso de posiciones (rutina diaria):
@@ -94,12 +95,35 @@ def _outcome_index(market_row: sqlite3.Row, outcome: str) -> int | None:
 
 
 def slippage_ok(entry_price: float, current_price: float,
-                max_slippage_pct: float) -> bool:
-    """True si el precio no subió más de max_slippage_pct desde la entrada
-    de la wallet copiada. Pura."""
+                max_slippage_pct: float,
+                max_caida_puntos: float = 0.10) -> bool:
+    """True si todavía estamos comprando la misma apuesta que la wallet.
+
+    Se acota por los dos lados, y el de abajo es el que faltaba. Hasta el
+    2026-08-26 una caída de precio se daba por buena —"está más barato"—
+    y eso es un error de razonamiento en un mercado binario: el precio ES
+    la probabilidad. Si la wallet entró a 0.522 y ahora el mercado paga
+    0.345, no hay descuento; hay 18 puntos menos de probabilidad porque
+    algo pasó. No estamos copiando su apuesta, estamos comprando una que
+    ya va perdiendo.
+
+    Pasó exactamente eso con "Bitcoin Up or Down, 10:45PM-11:00PM ET": dos
+    wallets top compraron Up a 0.522, nuestro libro daba 0.345, el control
+    lo dejó pasar por ser más barato y se llenó a 0.223. Perdido entero.
+
+    La caída se mide en PUNTOS de probabilidad, no en porcentaje: caer de
+    0.90 a 0.80 y de 0.20 a 0.10 es la misma noticia (diez puntos), aunque
+    en porcentaje sean -11% y -50%.
+
+    Pura.
+    """
     if entry_price <= 0 or current_price <= 0:
         return False
-    return (current_price - entry_price) / entry_price <= max_slippage_pct
+    if (current_price - entry_price) / entry_price > max_slippage_pct:
+        return False                       # subió: pagaríamos de más
+    if max_caida_puntos > 0 and entry_price - current_price > max_caida_puntos:
+        return False                       # bajó: ya no es la misma apuesta
+    return True
 
 
 def pick_holdings_consensus(holdings: list[dict[str, Any]],
@@ -210,6 +234,9 @@ class CopyTradingStrategy:
         self.budget_pct = float(cfg.get("budget_pct", 0.50))
         self.base_pct = float(cfg.get("base_pct_per_trade", 0.03))
         self.max_slippage = float(cfg.get("max_slippage_pct", 0.10))
+        # Cuánta probabilidad puede haber perdido el mercado desde que entró
+        # la wallet antes de que deje de ser su apuesta (en puntos, no en %).
+        self.max_caida_puntos = float(cfg.get("max_caida_puntos", 0.10))
         # Piso por apuesta: por debajo de esto no vale la pena el riesgo
         # operativo (fees de red, spread, mínimos del exchange).
         self.min_trade_usdc = float(cfg.get("min_trade_usdc", 10.0))
@@ -419,7 +446,8 @@ class CopyTradingStrategy:
             log.info("no copio '%s': pagaríamos %.3f y la línea sharp dice "
                      "%.3f", cand.title[:40], cur_price, justo)
             return None
-        if not slippage_ok(leader["price"], cur_price, self.max_slippage):
+        if not slippage_ok(leader["price"], cur_price, self.max_slippage,
+                           self.max_caida_puntos):
             log.info("no copio '%s': precio ya movió %.3f→%.3f (>%.0f%%)",
                      cand.title[:40], leader["price"], cur_price,
                      self.max_slippage * 100)
@@ -503,7 +531,8 @@ class CopyTradingStrategy:
             cur_price = self.broker.mark_price(
                 cand["condition_id"], idx, cand["avg_entry"])
             if cur_price > max_entry or not slippage_ok(
-                    cand["avg_entry"], cur_price, self.max_slippage):
+                    cand["avg_entry"], cur_price, self.max_slippage,
+                    self.max_caida_puntos):
                 continue
             import json as _json
             tokens = _json.loads(market["clob_token_ids"] or "[]")
