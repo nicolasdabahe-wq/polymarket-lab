@@ -476,10 +476,23 @@ def cmd_set_baseline(app: App, amount: float) -> None:
           "El PnL se mide desde ahí.")
 
 
-async def cmd_trades(app: App) -> None:
-    rows = app.conn.execute(
-        "SELECT * FROM orders ORDER BY created_at DESC LIMIT 25").fetchall()
-    print(f"\nÚltimas órdenes ({len(rows)}):")
+async def cmd_trades(app: App, n: int = 25,
+                     buscar: str | None = None) -> None:
+    # Con `buscar` se filtra por el texto del mercado: las órdenes que
+    # interesan casi nunca están entre las 25 últimas.
+    if buscar:
+        rows = app.conn.execute(
+            """SELECT o.* FROM orders o
+               LEFT JOIN markets m ON m.condition_id = o.condition_id
+               WHERE m.question LIKE ? OR o.reason LIKE ?
+               ORDER BY o.created_at DESC LIMIT ?""",
+            (f"%{buscar}%", f"%{buscar}%", n)).fetchall()
+    else:
+        rows = app.conn.execute(
+            "SELECT * FROM orders ORDER BY created_at DESC LIMIT ?",
+            (n,)).fetchall()
+    titulo = f" que contienen '{buscar}'" if buscar else ""
+    print(f"\nÚltimas órdenes{titulo} ({len(rows)}):")
     for r in rows:
         if r["status"] == "FILLED":
             detail = (f"{r['fill_size']:.0f} u @ {r['fill_price']:.3f} "
@@ -661,7 +674,11 @@ def main() -> None:
     sub.add_parser("daily")
     sub.add_parser("trade-cycle")
     sub.add_parser("portfolio")
-    sub.add_parser("trades")
+    p_trades = sub.add_parser("trades")
+    p_trades.add_argument("--n", type=int, default=25,
+                          help="cuántas órdenes listar")
+    p_trades.add_argument("--buscar", default=None,
+                          help="filtrar por texto de la pregunta del mercado")
     p_kill = sub.add_parser("kill")
     p_kill.add_argument("mode", choices=["on", "off"])
     p_bt = sub.add_parser("backtest-wallet")
@@ -727,7 +744,7 @@ def main() -> None:
             elif args.command == "portfolio":
                 await cmd_portfolio(app)
             elif args.command == "trades":
-                await cmd_trades(app)
+                await cmd_trades(app, n=args.n, buscar=args.buscar)
             elif args.command == "kill":
                 cmd_kill(app, args.mode)
             elif args.command == "backtest-wallet":
