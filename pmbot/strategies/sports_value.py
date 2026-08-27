@@ -216,20 +216,23 @@ class SportsValueStrategy:
             self._nota("líneas sharp: cliente apagado (falta ODDS_API_KEY)")
         else:
             self._nota(f"líneas sharp de MLB: {len(lineas)} partidos")
+        # El béisbol y el fútbol son independientes: hasta el 2026-08-27 un
+        # fallo de la API de la MLB devolvía [] y se llevaba por delante el
+        # escaneo de fútbol, que no la necesita para nada. Con el 406 del
+        # droplet eso dejó la estrategia entera muda durante días.
+        ejecutadas: list[str] = []
+        fuerzas: dict[str, float] = {}
+        juegos: list[Any] = []
         try:
             fuerzas = await self._fuerzas()
-            juegos = []
             for delta in (0, 1):     # hoy y mañana (los mercados abren antes)
                 fecha = (ahora + timedelta(days=delta)).date().isoformat()
                 juegos.extend(await self.mlb.juegos(fecha))
+            self._nota(f"juegos de MLB (hoy y mañana): {len(juegos)}")
         except Exception as exc:
             log.warning("datos de MLB no disponibles: %s", exc)
-            return []
-        self._nota(f"juegos de MLB (hoy y mañana): {len(juegos)}")
-        if not juegos:
-            return []
+            self._nota(f"béisbol fuera de juego: {exc}")
 
-        ejecutadas: list[str] = []
         for juego in juegos:
             try:
                 desc = await self._evaluar(juego, fuerzas, ahora)
@@ -238,7 +241,11 @@ class SportsValueStrategy:
                 continue
             if desc:
                 ejecutadas.append(desc)
-        ejecutadas.extend(await self._escanear_futbol(ahora))
+        try:
+            ejecutadas.extend(await self._escanear_futbol(ahora))
+        except Exception as exc:
+            log.warning("fútbol no disponible: %s", exc)
+            self._nota(f"fútbol fuera de juego: {exc}")
         return ejecutadas
 
     # ---------- fútbol con línea sharp ----------

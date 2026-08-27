@@ -150,3 +150,51 @@ def test_apagada_lo_dice(tmp_path):
     import asyncio
     asyncio.run(est.scan_and_execute(traza=traza, simular=True))
     assert any("apagada" in t for t in traza)
+
+
+# --- Un deporte caído no puede callar al otro -------------------------------
+
+class MlbRoto:
+    """La API de la MLB devolviendo 406, como en el droplet el 2026-08-27."""
+    async def equipos(self, temporada):
+        raise RuntimeError("Client error '406 Not Acceptable'")
+    async def juegos(self, fecha):
+        raise RuntimeError("Client error '406 Not Acceptable'")
+
+
+class OddsFalso:
+    enabled = True
+    def __init__(self): self.consultada = []
+    async def lineas(self, deporte):
+        self.consultada.append(deporte)
+        return []
+
+
+def test_el_futbol_corre_aunque_la_mlb_este_caida(tmp_path):
+    """El fallo real: `juegos()` lanzaba, el `except` devolvía [] y con eso
+    se saltaba también el escaneo de fútbol, que no necesita la MLB para
+    nada. Un 406 de una API dejó la estrategia entera muda durante días."""
+    import asyncio
+
+    conn = connect(tmp_path / "r.db")
+    odds = OddsFalso()
+    cfg = {"enabled": True, "min_edge": 0.08, "max_entry_price": 0.60,
+           "min_trade_usdc": 25.0, "soccer_leagues": ["soccer_epl"]}
+    est = SportsValueStrategy(conn, MlbRoto(), None, BrokerFalso(), cfg,
+                              None, odds=odds)
+    traza = []
+    asyncio.run(est.scan_and_execute(traza=traza, simular=True))
+
+    assert any("béisbol fuera de juego" in t for t in traza), traza
+    # Lo que importa: se llegó a mirar el fútbol pese al fallo del béisbol.
+    assert any("fútbol" in t for t in traza), traza
+
+
+def test_la_mlb_caida_no_revienta_la_estrategia(tmp_path):
+    """Sin traza tampoco puede lanzar: el scheduler la llama cada 20 min."""
+    import asyncio
+
+    conn = connect(tmp_path / "r2.db")
+    est = SportsValueStrategy(conn, MlbRoto(), None, BrokerFalso(),
+                              {"enabled": True}, None, odds=None)
+    assert asyncio.run(est.scan_and_execute()) == []

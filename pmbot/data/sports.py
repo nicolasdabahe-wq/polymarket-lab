@@ -23,6 +23,21 @@ from ..http import HttpClient
 log = logging.getLogger("pmbot.data.sports")
 
 MLB_BASE = "https://statsapi.mlb.com/api/v1"
+
+# statsapi.mlb.com está detrás de un cortafuegos que responde 406 Not
+# Acceptable a los clientes que no parecen un navegador. Con el User-Agent
+# por defecto ("pmbot/0.1") la API funciona desde una IP doméstica y falla
+# desde un datacenter: el 2026-08-27 el droplet llevaba días recibiendo 406
+# en /schedule, `juegos()` lanzaba, y sports_value no había hecho ni una
+# apuesta desde que se encendió. No hay nada que burlar aquí — la API es
+# pública y gratuita — solo hace falta pedir en el formato que espera.
+CABECERAS_MLB = {
+    "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 CACHE_SEGUNDOS = 900
 
 
@@ -63,7 +78,8 @@ class MlbClient:
         hit = self._cache.get(clave)
         if hit and time.monotonic() - hit[0] < CACHE_SEGUNDOS:
             return hit[1]
-        data = await self.http.get_json(f"{MLB_BASE}/{path}", params=params)
+        data = await self.http.get_json(f"{MLB_BASE}/{path}", params=params,
+                                        headers=CABECERAS_MLB)
         self._cache[clave] = (time.monotonic(), data)
         return data
 
