@@ -117,6 +117,59 @@ GANA_RE = re.compile(r"^will\s+(?P<equipo>.+?)\s+win\s+on\s+\d{4}-\d{2}-\d{2}\??
 VS_RE = re.compile(r"^(?P<a>[^:]+?)\s+vs\.?\s+(?P<b>[^:]+?)$", re.IGNORECASE)
 
 
+# Mercados derivados: se juegan sobre el mismo partido pero no sobre quién
+# gana. Comparten la forma «algo: A vs B» con el ganador de tenis, así que la
+# lista es lo que los separa.
+_DERIVADO = re.compile(
+    r"\bset\b|\bspread\b|handicap|hándicap|\bo/u\b|over/under|\btotal|"
+    r"\bwinner\b|inning|\bquarter\b|\bhalf\b|\bperiod\b|\bgame\b|"
+    r"\bmap\b|\bcorners?\b|\bcards?\b",
+    re.IGNORECASE)
+
+
+def leer_partido(pregunta: str,
+                 salidas: list[str] | None = None) -> tuple[str, str] | None:
+    """Los dos participantes de un mercado de ganador de partido, o None.
+
+    Existe por el tenis: Polymarket titula esos mercados «Winston-Salem Open:
+    Juan Manuel Cerundolo vs Sebastian Baez», con el torneo delante, y
+    `leer_pregunta` descarta de plano todo lo que lleve dos puntos. Resultado
+    medido el 2026-08-27: 1.915 mercados de tenis abiertos y el bot miraba
+    cero.
+
+    Levantar esa restricción sin más metería basura, porque la misma forma la
+    tienen los derivados: «Set 1 Winner: Cerundolo vs Baez», «Game Spread:
+    Baez (-1.5) vs Cerundolo (+1.5)» y, en béisbol, «Will there be a run
+    scored in the first inning?: Dodgers vs. Braves». Dos filtros los separan:
+
+    · Las SALIDAS tienen que ser los dos participantes. Las props de béisbol
+      se resuelven Yes/No, así que caen aquí solas — es el filtro fuerte,
+      porque no depende de adivinar cómo se titula un torneo.
+    · El prefijo no puede nombrar un derivado (set, spread, total, game...).
+      Esto es lo que descarta al ganador de set, que sí tiene a los dos
+      jugadores como salidas.
+
+    Pura.
+    """
+    texto = (pregunta or "").strip()
+    if not texto:
+        return None
+    prefijo, _, cola = texto.rpartition(":")
+    if prefijo and (_DERIVADO.search(prefijo) or "?" in prefijo
+                    or prefijo.lower().startswith("will ")):
+        return None
+    m = VS_RE.match(cola.strip())
+    if not m:
+        return None
+    a, b = apodo(m.group("a")), apodo(m.group("b"))
+    if not a or not b or a == b:
+        return None
+    if salidas is not None:
+        if {apodo(x) for x in salidas} != {a, b}:
+            return None
+    return a, b
+
+
 def leer_pregunta(pregunta: str) -> PreguntaMLB | None:
     """Extrae de qué equipo habla el mercado. None si no es un ganador
     simple (spreads, over/under, carreras exactas: el modelo no los cubre).
