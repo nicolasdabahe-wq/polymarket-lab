@@ -306,7 +306,8 @@ class SportsValueStrategy:
                         continue
                     desc = await self._apostar_binario(
                         fila, prob,
-                        f"línea sharp {liga} ({linea.casas} casas)", inicio)
+                        f"línea sharp {liga} ({linea.casas} casas)", inicio,
+                        etq=f"{liga}: {equipo}")
                     if desc:
                         hechas.append(desc)
         return hechas
@@ -350,7 +351,8 @@ class SportsValueStrategy:
         return None
 
     async def _apostar_binario(self, fila: sqlite3.Row, prob_yes: float,
-                               fuente: str, inicio: datetime) -> str | None:
+                               fuente: str, inicio: datetime,
+                               etq: str = "") -> str | None:
         """Evalúa YES y NO de un mercado binario contra la probabilidad
         sharp y ejecuta el lado con ventaja, si la hay."""
         tokens = _json.loads(fila["clob_token_ids"] or "[]")
@@ -367,13 +369,26 @@ class SportsValueStrategy:
             ventaja = prob - ask
             if mejor is None or ventaja > mejor[0]:
                 mejor = (ventaja, idx, outcome, prob, ask)
-        if not mejor or mejor[0] < self.min_edge:
+        if not mejor:
+            self._nota(f"{etq}: sin precio usable en el libro")
+            return None
+        if mejor[0] < self.min_edge:
+            self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
+                       f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "
+                       f"por debajo de {self.min_edge:.0%} [{fuente}]")
             return None
         ventaja, idx, outcome, prob, ask = mejor
         usdc = kelly_usdc(self.broker.equity(), ask, prob / ask - 1.0,
                           self.kelly_fraction, self.min_trade_usdc,
                           self.max_trade_pct)
         if usdc <= 0:
+            self._nota(f"{etq}: ventaja {ventaja:+.1%} pero Kelly no llega "
+                       f"al mínimo de ${self.min_trade_usdc:.0f}")
+            return None
+        if getattr(self, "_simular", False):
+            self._nota(f"{etq}: APOSTARÍA {outcome} de "
+                       f"«{fila['question'][:40]}» @ {ask:.3f} ${usdc:.2f} "
+                       f"(ventaja {ventaja:+.1%}) [{fuente}]")
             return None
         razon = (f"{fuente}: {outcome} de «{fila['question'][:45]}» vale "
                  f"{prob:.0%} y el libro pide {ask:.0%} "
@@ -419,6 +434,21 @@ class SportsValueStrategy:
                        f"{self.minutos_antes:.0f} min")
             return None
 
+        # El modelo propio se calcula SIEMPRE, incluso cuando hay línea
+        # sharp que lo va a sustituir: comparar los dos números en los
+        # partidos que sí tienen línea es la única forma de saber cuánto se
+        # equivoca el modelo en los que no la tienen. Sin esa medida, sus
+        # "ventajas" de 8-11 puntos en partidos sin línea no se distinguen
+        # de un error suyo de 8-11 puntos.
+        aj_local = ajuste_pitcher(
+            juego.pitcher_local.era, juego.pitcher_local.entradas,
+            self.peso_pitcher) if juego.pitcher_local else 0.0
+        aj_visitante = ajuste_pitcher(
+            juego.pitcher_visitante.era, juego.pitcher_visitante.entradas,
+            self.peso_pitcher) if juego.pitcher_visitante else 0.0
+        p_modelo = prob_local(fuerzas[local], fuerzas[visitante],
+                              aj_local, aj_visitante, self.ventaja_local)
+
         linea = getattr(self, "_lineas_por_par", {}).get(
             frozenset((local, visitante)))
         if linea is not None:
@@ -427,15 +457,12 @@ class SportsValueStrategy:
             p_local = (linea.prob_local if apodo(linea.local) == local
                        else linea.prob_visitante)
             fuente = f"línea sharp ({linea.casas} casas)"
+            self._nota(f"CALIBRACIÓN {etq}: mi modelo dice "
+                       f"{p_modelo:.1%} para el local, la sharp dice "
+                       f"{p_local:.1%} -> me equivoco "
+                       f"{abs(p_modelo - p_local)*100:.1f} puntos")
         else:
-            aj_local = ajuste_pitcher(
-                juego.pitcher_local.era, juego.pitcher_local.entradas,
-                self.peso_pitcher) if juego.pitcher_local else 0.0
-            aj_visitante = ajuste_pitcher(
-                juego.pitcher_visitante.era, juego.pitcher_visitante.entradas,
-                self.peso_pitcher) if juego.pitcher_visitante else 0.0
-            p_local = prob_local(fuerzas[local], fuerzas[visitante],
-                                 aj_local, aj_visitante, self.ventaja_local)
+            p_local = p_modelo
             fuente = "modelo propio"
 
         mercado = self._buscar_mercado(visitante, local, inicio)

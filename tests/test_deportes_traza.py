@@ -255,3 +255,67 @@ def test_el_era_se_pide_en_lotes_chicos():
     asyncio.run(MlbClient(http).eras([str(i) for i in range(13)]))
     assert len(http.lotes) == 3
     assert all(len(l) <= 6 for l in http.lotes), http.lotes
+
+
+# --- Calibración: cuánto se equivoca el modelo propio -----------------------
+
+class LineaFalsa:
+    def __init__(self, local, visitante, prob_local):
+        self.local, self.visitante = local, visitante
+        self.prob_local = prob_local
+        self.prob_visitante = 1 - prob_local
+        self.casas = 14
+        self.inicio_utc = _dentro_de(5)
+
+
+class OddsConLinea:
+    enabled = True
+    def __init__(self, linea): self.linea = linea
+    async def lineas(self, deporte): return [self.linea]
+
+
+def test_mide_el_error_del_modelo_donde_hay_linea_sharp(tmp_path):
+    """Las 3 apuestas del 2026-08-27 salieron TODAS de partidos sin línea
+    sharp; en los 6 que sí la tenían la ventaja era de ±1 punto. Una ventaja
+    que solo aparece donde nadie puede comprobarla no es una ventaja
+    mientras no se sepa cuánto se equivoca el modelo. Por eso el modelo se
+    calcula siempre, aunque la sharp lo sustituya."""
+    import asyncio
+
+    juegos = [JuegoFalso("New York Yankees", "Tampa Bay Rays", _dentro_de(5),
+                         PitcherFalso(), PitcherFalso())]
+    conn = connect(tmp_path / "c.db")
+    linea = LineaFalsa("Tampa Bay Rays", "New York Yankees", 0.50)
+    cfg = {"enabled": True, "min_edge": 0.08, "max_entry_price": 0.60,
+           "min_trade_usdc": 25.0, "min_minutos_antes": 15}
+    est = SportsValueStrategy(conn, MlbFalso(juegos), None, BrokerFalso(0.40),
+                              cfg, None, odds=OddsConLinea(linea))
+    with conn:
+        conn.execute(
+            """INSERT INTO markets (condition_id, question, category, active,
+               clob_token_ids, raw, updated_at)
+               VALUES ('0xg','New York Yankees vs Tampa Bay Rays','sports',1,
+                       '["t0","t1"]',
+                       '{"outcomes":"[\\"New York Yankees\\", \\"Tampa Bay Rays\\"]"}',
+                       'x')""")
+    traza = []
+    asyncio.run(est.scan_and_execute(traza=traza, simular=True))
+
+    cal = [t for t in traza if "CALIBRACIÓN" in t]
+    assert cal, traza
+    # Rays 700/550 contra Yankees 600/600: el modelo los ve muy por encima
+    # del 50% que dice la sharp, y esa distancia es justo lo que hay que ver.
+    assert "me equivoco" in cal[0]
+    assert "la sharp dice 50.0%" in cal[0]
+
+
+def test_sin_linea_sharp_no_hay_calibracion(tmp_path):
+    """Sin con qué compararse, el modelo no puede presumir de nada."""
+    import asyncio
+
+    juegos = [JuegoFalso("New York Yankees", "Tampa Bay Rays", _dentro_de(5),
+                         PitcherFalso(), PitcherFalso())]
+    est, conn, _ = armar(tmp_path, ask=0.40, juegos=juegos)
+    traza = []
+    asyncio.run(est.scan_and_execute(traza=traza, simular=True))
+    assert not [t for t in traza if "CALIBRACIÓN" in t]

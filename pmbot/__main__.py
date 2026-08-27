@@ -541,6 +541,26 @@ async def cmd_deportes(app: App) -> None:
     print(f"\n   {len(apuestas)} apuesta(s) pasarían el modelo. "
           f"El riesgo todavía puede frenarlas aparte.")
 
+    # Cuánto se equivoca el modelo propio donde SÍ se le puede tomar la
+    # lección. Sin esta cuenta, sus ventajas en los partidos sin línea no se
+    # distinguen de su propio error.
+    import re as _re
+    errores = [float(m.group(1)) for t in traza
+               if (m := _re.search(r"me equivoco ([\d.]+) puntos", t))]
+    if errores:
+        errores.sort()
+        media = sum(errores) / len(errores)
+        print(f"\n   📏 CALIBRACIÓN sobre {len(errores)} partidos con línea "
+              f"sharp: el modelo propio se desvía {media:.1f} puntos de "
+              f"media (mediana {errores[len(errores)//2]:.1f}, "
+              f"máximo {errores[-1]:.1f}).")
+        print(f"      Umbral para apostar: {est.min_edge:.0%}. Si el error "
+              f"típico es igual o mayor que el umbral, las 'ventajas' de "
+              f"los partidos SIN línea son ruido del modelo, no dinero.")
+    else:
+        print("\n   📏 Sin partidos con línea sharp: no hay forma de saber "
+              "cuánto se equivoca el modelo propio.")
+
 
 async def cmd_live_check(app: App) -> None:
     from .execution import LiveBroker
