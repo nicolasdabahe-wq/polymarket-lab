@@ -180,8 +180,16 @@ class SportsValueStrategy:
         return {apodo(n): pitagorica(e.carreras_a_favor, e.carreras_en_contra)
                 for n, e in equipos.items()}
 
-    async def scan_and_execute(self) -> list[str]:
+    async def scan_and_execute(self, traza: list[str] | None = None,
+                               simular: bool = False) -> list[str]:
+        """Con `traza` va apuntando por qué cada juego termina sin apuesta;
+        con `simular` no manda nada al broker. Es el MISMO camino que usa el
+        bot de verdad: un diagnóstico que recorriera su propia copia del
+        código no probaría nada sobre el código que opera."""
+        self._traza = traza
+        self._simular = simular
         if not self.enabled:
+            self._nota("la estrategia está apagada en config.yaml")
             return []
         ahora = datetime.now(timezone.utc)
         # Traer los mercados de béisbol al cache: los juegos del día no
@@ -204,6 +212,10 @@ class SportsValueStrategy:
                 log.debug("odds no disponibles: %s", exc)
         self._lineas_por_par = {
             frozenset((apodo(l.local), apodo(l.visitante))): l for l in lineas}
+        if self.odds is None or not getattr(self.odds, "enabled", False):
+            self._nota("líneas sharp: cliente apagado (falta ODDS_API_KEY)")
+        else:
+            self._nota(f"líneas sharp de MLB: {len(lineas)} partidos")
         try:
             fuerzas = await self._fuerzas()
             juegos = []
@@ -213,6 +225,7 @@ class SportsValueStrategy:
         except Exception as exc:
             log.warning("datos de MLB no disponibles: %s", exc)
             return []
+        self._nota(f"juegos de MLB (hoy y mañana): {len(juegos)}")
         if not juegos:
             return []
 
@@ -244,8 +257,11 @@ class SportsValueStrategy:
         """
         if not (self.ligas_futbol and self.odds is not None
                 and getattr(self.odds, "enabled", False)):
+            self._nota("fútbol: sin ligas configuradas o sin ODDS_API_KEY")
             return []
         mercados = self._mercados_ganador_futbol()
+        self._nota(f"fútbol: {len(mercados)} mercados «Will X win on FECHA?» "
+                   f"en el cache de Polymarket")
         if not mercados:
             return []
         from ..data.odds import nombre_coincide
@@ -362,10 +378,17 @@ class SportsValueStrategy:
             return razon
         return None
 
+    def _nota(self, texto: str) -> None:
+        if getattr(self, "_traza", None) is not None:
+            self._traza.append(texto)
+
     async def _evaluar(self, juego: Any, fuerzas: dict[str, float],
                        ahora: datetime) -> str | None:
         visitante, local = apodo(juego.visitante), apodo(juego.local)
+        etq = f"{juego.visitante} @ {juego.local}"
         if visitante not in fuerzas or local not in fuerzas:
+            self._nota(f"{etq}: sin fuerza para "
+                       f"{visitante if visitante not in fuerzas else local}")
             return None
         # El partido tiene que estar por empezar, no en curso.
         try:
@@ -374,6 +397,8 @@ class SportsValueStrategy:
         except ValueError:
             return None
         if inicio - ahora < timedelta(minutes=self.minutos_antes):
+            self._nota(f"{etq}: ya empezó o le faltan menos de "
+                       f"{self.minutos_antes:.0f} min")
             return None
 
         linea = getattr(self, "_lineas_por_par", {}).get(
@@ -397,6 +422,7 @@ class SportsValueStrategy:
 
         mercado = self._buscar_mercado(visitante, local, inicio)
         if not mercado:
+            self._nota(f"{etq}: Polymarket no tiene mercado de ganador simple")
             return None
         tokens = _json.loads(mercado["clob_token_ids"] or "[]")
         salidas = _json.loads(
@@ -424,7 +450,14 @@ class SportsValueStrategy:
             ventaja = prob - ask
             if mejor is None or ventaja > mejor[0]:
                 mejor = (ventaja, idx, salida, prob, ask)
-        if not mejor or mejor[0] < self.min_edge:
+        if not mejor:
+            self._nota(f"{etq}: sin precio usable (libro vacío o por encima "
+                       f"de {self.max_entry:.2f}) [{fuente}]")
+            return None
+        if mejor[0] < self.min_edge:
+            self._nota(f"{etq}: {mejor[2]} vale {mejor[3]:.0%} y pide "
+                       f"{mejor[4]:.0%} -> ventaja {mejor[0]:+.1%}, "
+                       f"por debajo de {self.min_edge:.0%} [{fuente}]")
             return None
         ventaja, idx, salida, prob, ask = mejor
 
@@ -435,6 +468,9 @@ class SportsValueStrategy:
                           self.kelly_fraction, self.min_trade_usdc,
                           self.max_trade_pct)
         if usdc <= 0:
+            self._nota(f"{etq}: ventaja {ventaja:+.1%} pero Kelly no llega "
+                       f"al mínimo de ${self.min_trade_usdc:.0f} "
+                       f"(equity ${self.broker.equity():.2f})")
             return None
 
         pit = ""
@@ -446,6 +482,10 @@ class SportsValueStrategy:
                  f"{ask:.0%} (ventaja {ventaja:+.0%}; pitagórica "
                  f"{fuerzas[local]:.3f} local vs {fuerzas[visitante]:.3f} "
                  f"visitante{pit})")
+        if getattr(self, "_simular", False):
+            self._nota(f"{etq}: APOSTARÍA {salida} @ {ask:.3f} "
+                       f"${usdc:.2f} (ventaja {ventaja:+.1%}) [{fuente}]")
+            return None
         fill = await self.broker.execute(
             f"sports:{mercado['condition_id']}:{idx}",
             OrderRequest(

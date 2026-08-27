@@ -15,6 +15,7 @@
   python -m pmbot notify-test        # mandar mensaje de prueba por Telegram
   python -m pmbot test-trade         # compra y vende ~$1-2 real: valida el circuito
   python -m pmbot analisis [--dias N] # qué funciona y qué no, sobre lo ya cerrado
+  python -m pmbot deportes          # por qué el modelo deportivo apuesta o no
   python -m pmbot set-baseline N     # fija el capital inicial contra el que se mide el PnL
   python -m pmbot validate-wallets [--force]  # backtestea el ranking y habilita a quién copiar
   python -m pmbot wallets            # a quién copia el bot y en qué orden las vigila
@@ -516,6 +517,31 @@ async def cmd_trades(app: App, n: int = 25,
             print(f"      motivo: {r['reason'][:90]}")
 
 
+async def cmd_deportes(app: App) -> None:
+    """Por qué el modelo deportivo apuesta o no, juego por juego.
+
+    Recorre el MISMO camino que usa el bot (scan_and_execute con traza), sin
+    mandar nada al broker. Un diagnóstico con su propia copia de la lógica
+    no probaría nada sobre la lógica que opera de verdad.
+    """
+    traza: list[str] = []
+    await app.sports_value.scan_and_execute(traza=traza, simular=True)
+    est = app.sports_value
+    print(f"\n⚾ MODELO DEPORTIVO — umbrales: ventaja mínima "
+          f"{est.min_edge:.0%}, precio máximo {est.max_entry:.2f}, "
+          f"apuesta mínima ${est.min_trade_usdc:.0f}, "
+          f"antelación {est.minutos_antes:.0f} min")
+    print(f"   equity para dimensionar: ${app.broker.equity():.2f}\n")
+    if not traza:
+        print("   (sin nada que contar: ni juegos ni datos)")
+        return
+    apuestas = [t for t in traza if "APOSTARÍA" in t]
+    for linea in traza:
+        print(f"   {'>>> ' if 'APOSTARÍA' in linea else ''}{linea}")
+    print(f"\n   {len(apuestas)} apuesta(s) pasarían el modelo. "
+          f"El riesgo todavía puede frenarlas aparte.")
+
+
 async def cmd_live_check(app: App) -> None:
     from .execution import LiveBroker
     if not isinstance(app.broker, LiveBroker):
@@ -674,6 +700,7 @@ def main() -> None:
     sub.add_parser("daily")
     sub.add_parser("trade-cycle")
     sub.add_parser("portfolio")
+    sub.add_parser("deportes")
     p_trades = sub.add_parser("trades")
     p_trades.add_argument("--n", type=int, default=25,
                           help="cuántas órdenes listar")
@@ -743,6 +770,8 @@ def main() -> None:
                 await cmd_trade_cycle(app)
             elif args.command == "portfolio":
                 await cmd_portfolio(app)
+            elif args.command == "deportes":
+                await cmd_deportes(app)
             elif args.command == "trades":
                 await cmd_trades(app, n=args.n, buscar=args.buscar)
             elif args.command == "kill":
