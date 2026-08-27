@@ -196,6 +196,16 @@ def cmd_rendimiento(app: App, dias: int | None = None) -> None:
     print("\n(real = cerrado y cobrado; flot = posiciones aún abiertas)")
 
 
+def _plazo(dias: float) -> str:
+    """Días u horas, lo que se lea mejor. Con cortes por debajo de un día,
+    "{:.0f} días" imprimía "0 días" y el aviso no decía nada."""
+    if dias < 0:
+        return "fecha vencida (limbo)"
+    if dias < 1:
+        return f"{dias * 24:.0f} horas"
+    return f"{dias:.0f} días"
+
+
 async def cmd_capital(app: App, vender: bool = False,
                       dias_min: float | None = None) -> None:
     """Cuánto capital está dormido y en qué. Con --vender lo libera.
@@ -224,7 +234,11 @@ async def cmd_capital(app: App, vender: bool = False,
             "SELECT end_date FROM markets WHERE condition_id = ?",
             (p["condition_id"],)).fetchone()
         dias = dias_hasta(fila["end_date"]) if fila else None
-        umbral = app.risk.limits.slow_days
+        # Con --dias N el corte manda también aquí: si no, una posición que
+        # se resuelve mañana ni siquiera se listaba (el umbral fijo eran los
+        # `slow_days` de la política) y `--dias 0.5` no tenía nada que vender.
+        umbral = (dias_min if dias_min is not None
+                  else app.risk.limits.slow_days)
         # dias negativo = el endDate ya pasó y el mercado sigue abierto:
         # está en limbo (ej. una primaria que se fue a segunda vuelta).
         # Es el peor capital dormido, el que no tiene fecha.
@@ -252,18 +266,18 @@ async def cmd_capital(app: App, vender: bool = False,
     if not vender:
         if a_vender:
             libera = sum(v for _, v, _, _ in a_vender)
-            print(f"\nDe eso, ${libera:.2f} está más allá de los {corte:.0f} "
-                  f"días que hoy permite la política.")
+            print(f"\nDe eso, ${libera:.2f} está más allá de "
+                  f"{_plazo(corte)}, que es lo que hoy permite la política.")
             print("Para liberar SOLO eso:  python -m pmbot capital --vender")
             print("Para elegir otro corte: python -m pmbot capital --vender "
                   "--dias 7")
         else:
-            print(f"\nNada supera los {corte:.0f} días: lo dormido está "
-                  f"dentro de la política y varias posiciones están "
-                  f"trabajando. No hay nada que liberar.")
+            print(f"\nNada supera {_plazo(corte)}: lo dormido está dentro "
+                  f"de la política y varias posiciones están trabajando. "
+                  f"No hay nada que liberar.")
         return
     if not a_vender:
-        print(f"\nNada supera los {corte:.0f} días. No se vende nada.")
+        print(f"\nNada supera {_plazo(corte)}. No se vende nada.")
         return
     hoy = datetime.now(timezone.utc).date().isoformat()
     for dias, valor, marca, p in a_vender:
@@ -274,7 +288,7 @@ async def cmd_capital(app: App, vender: bool = False,
                 category=p["category"] or "other", token_id=p["token_id"],
                 outcome=p["outcome"], outcome_index=p["outcome_index"] or 0,
                 side="SELL", size=p["size"], price=0.0,
-                reason=f"liberar capital: se resolvía en {dias:.0f} días"))
+                reason=f"liberar capital: se resolvía en {_plazo(dias)}"))
         estado = "✅" if fill.status == "FILLED" else "⚠️"
         print(f"{estado} {(p['question'] or '')[:46]:48} {fill.status} "
               f"{fill.detail[:40]}")

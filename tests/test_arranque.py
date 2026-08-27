@@ -52,15 +52,26 @@ def test_el_estado_del_portfolio_se_calcula(app):
 
 
 def test_los_limites_de_velocidad_llegan_del_config(app):
-    """Política del dueño (2026-08-22): el dinero no se para más de tres
-    días, sin excepciones. Hubo una excepción por "oportunidad dorada" y se
-    eliminó porque no era lo que se había pedido: si vuelve a aparecer algo
-    que estire ese plazo, este test tiene que fallar."""
+    """Política del dueño: el dinero se cobra el mismo día.
+
+    El 2026-08-22 el plazo eran tres días, sin excepciones — hubo una por
+    "oportunidad dorada" y se eliminó porque no era lo pedido. El 2026-08-27
+    lo apretó a 24 horas: quiere que el capital dé varias vueltas al día en
+    vez de quedarse retenido hasta mañana.
+
+    Si alguien estira ese plazo, este test tiene que fallar."""
     limites = app.risk.limits
-    assert limites.max_days_to_resolution == 3
+    assert limites.max_days_to_resolution == 1.0
     assert not hasattr(limites, "golden_edge")
+    # Lo dormido se mide con la misma vara: si `slow_days` se quedara en 3,
+    # una posición de dos días no contaría como capital parado y `capital
+    # --vender` no la vería.
+    assert limites.slow_days <= 1.0
     cripto = app.cfg.section("strategies")["crypto_value"]
-    assert cripto["max_days_to_resolution"] <= 3
+    assert cripto["max_days_to_resolution"] <= 1.0
+    # Y la ventana tiene que seguir siendo habitable: con el mínimo en medio
+    # día y el máximo en uno, casi nada entraba.
+    assert cripto["min_days_to_resolution"] < cripto["max_days_to_resolution"] / 2
 
 
 def test_no_queda_ningun_freno_por_perdidas(app):
