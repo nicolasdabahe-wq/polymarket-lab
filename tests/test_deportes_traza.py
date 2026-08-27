@@ -62,8 +62,12 @@ class BrokerFalso:
 
 def armar(tmp_path, ask=0.40, juegos=None):
     conn = connect(tmp_path / "d.db")
+    # solo_linea_sharp desactivado: estos casos ejercitan el camino del
+    # modelo propio, que en producción ya no abre posiciones (hay un test
+    # aparte para esa puerta).
     cfg = {"enabled": True, "min_edge": 0.08, "max_entry_price": 0.60,
-           "min_trade_usdc": 25.0, "min_minutos_antes": 15}
+           "min_trade_usdc": 25.0, "min_minutos_antes": 15,
+           "solo_linea_sharp": False}
     broker = BrokerFalso(ask)
     est = SportsValueStrategy(conn, MlbFalso(juegos or []), None, broker, cfg,
                               None, odds=None)
@@ -319,3 +323,67 @@ def test_sin_linea_sharp_no_hay_calibracion(tmp_path):
     traza = []
     asyncio.run(est.scan_and_execute(traza=traza, simular=True))
     assert not [t for t in traza if "CALIBRACIÓN" in t]
+
+
+# --- Sin línea sharp no se apuesta ------------------------------------------
+
+def test_sin_linea_sharp_el_modelo_opina_pero_no_apuesta(tmp_path):
+    """Medido el 2026-08-27 sobre los seis partidos con línea: el modelo
+    propio se desvía 5.7 puntos de media y hasta 11.9, con una típica de
+    ~6.6. Sus "ventajas" de +8.5%, +9.4% y +11.2% en partidos sin línea son
+    1.3-1.7 sigmas de su propio ruido — para separarlas del error haría
+    falta un umbral de ~13 puntos, y a ese nivel no aparece nada.
+
+    Ese día habría puesto $75 en tres partidos que no tenía con qué
+    comprobar."""
+    import asyncio
+
+    juegos = [JuegoFalso("New York Yankees", "Tampa Bay Rays", _dentro_de(5),
+                         PitcherFalso(), PitcherFalso())]
+    conn = connect(tmp_path / "p.db")
+    cfg = {"enabled": True, "min_edge": 0.08, "max_entry_price": 0.60,
+           "min_trade_usdc": 25.0, "min_minutos_antes": 15}   # por defecto: True
+    broker = BrokerFalso(0.20)          # precio tirado: ventaja enorme
+    est = SportsValueStrategy(conn, MlbFalso(juegos), None, broker, cfg,
+                              None, odds=None)
+    with conn:
+        conn.execute(
+            """INSERT INTO markets (condition_id, question, category, active,
+               clob_token_ids, raw, updated_at)
+               VALUES ('0xg','New York Yankees vs Tampa Bay Rays','sports',1,
+                       '["t0","t1"]',
+                       '{"outcomes":"[\\"New York Yankees\\", \\"Tampa Bay Rays\\"]"}',
+                       'x')""")
+    traza = []
+    asyncio.run(est.scan_and_execute(traza=traza, simular=True))
+
+    assert est.solo_linea_sharp is True          # por defecto
+    assert not [t for t in traza if "APOSTARÍA" in t], traza
+    assert any("sin línea sharp, no se apuesta" in t for t in traza), traza
+
+
+def test_con_linea_sharp_si_se_apuesta(tmp_path):
+    """La puerta no puede cerrarlo todo: donde hay con qué contrastarse y el
+    mercado se despega de verdad, se entra."""
+    import asyncio
+
+    juegos = [JuegoFalso("New York Yankees", "Tampa Bay Rays", _dentro_de(5),
+                         PitcherFalso(), PitcherFalso())]
+    conn = connect(tmp_path / "q.db")
+    linea = LineaFalsa("Tampa Bay Rays", "New York Yankees", 0.70)
+    cfg = {"enabled": True, "min_edge": 0.08, "max_entry_price": 0.60,
+           "min_trade_usdc": 25.0, "min_minutos_antes": 15}
+    est = SportsValueStrategy(conn, MlbFalso(juegos), None, BrokerFalso(0.50),
+                              cfg, None, odds=OddsConLinea(linea))
+    with conn:
+        conn.execute(
+            """INSERT INTO markets (condition_id, question, category, active,
+               clob_token_ids, raw, updated_at)
+               VALUES ('0xg','New York Yankees vs Tampa Bay Rays','sports',1,
+                       '["t0","t1"]',
+                       '{"outcomes":"[\\"New York Yankees\\", \\"Tampa Bay Rays\\"]"}',
+                       'x')""")
+    traza = []
+    asyncio.run(est.scan_and_execute(traza=traza, simular=True))
+    # sharp da 70% al local y el libro pide 50%: 20 puntos, eso sí es real.
+    assert any("APOSTARÍA" in t and "línea sharp" in t for t in traza), traza

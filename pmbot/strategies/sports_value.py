@@ -169,6 +169,9 @@ class SportsValueStrategy:
         self.ventaja_local = float(cfg.get("ventaja_local", 0.035))
         # Antelación mínima: el modelo no sabe del partido en curso.
         self.minutos_antes = float(cfg.get("min_minutos_antes", 15))
+        # Apostar solo donde hay línea de casas profesionales con la que
+        # contrastarse. Ver la nota en `_evaluar`.
+        self.solo_linea_sharp = bool(cfg.get("solo_linea_sharp", True))
         # Ligas de fútbol con línea sharp. Cada liga consultada cuesta 1
         # crédito de The Odds API por llamada: con cache de 6h y tres ligas
         # más MLB son ~480/mes, dentro del tier gratis de 500.
@@ -468,6 +471,21 @@ class SportsValueStrategy:
         mercado = self._buscar_mercado(visitante, local, inicio)
         if not mercado:
             self._nota(f"{etq}: Polymarket no tiene mercado de ganador simple")
+            return None
+        if linea is None and self.solo_linea_sharp:
+            # Medido el 2026-08-27 sobre los 6 partidos que sí tenían línea:
+            # el modelo propio se desvía 5.7 puntos de media y hasta 11.9,
+            # con una típica de ~6.6. Una "ventaja" de 9 puntos es 1.4 sigmas
+            # del cero: indistinguible de su propio error. Ese día habría
+            # apostado $75 en tres partidos sin línea con ventajas de +8.5%,
+            # +9.4% y +11.2%, las tres dentro del ruido.
+            #
+            # El modelo se sigue calculando y guardando como escudo (evita
+            # que las copias paguen de más), pero no abre posiciones: para
+            # eso haría falta un umbral de ~13 puntos, y a ese nivel no
+            # aparece nada. Se apuesta donde hay con qué comprobarse.
+            self._nota(f"{etq}: sin línea sharp, no se apuesta "
+                       f"(el modelo opina pero se desvía ~6 puntos)")
             return None
         tokens = _json.loads(mercado["clob_token_ids"] or "[]")
         salidas = _json.loads(

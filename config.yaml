@@ -336,6 +336,15 @@ strategies:
     ventaja_local: 0.035    # el local en MLB gana ~54% de los juegos
     # Solo antes del primer lanzamiento: el modelo no sabe el marcador.
     min_minutos_antes: 15
+    # Apostar SOLO donde hay línea de casas profesionales con la que
+    # contrastarse. Medido el 2026-08-27 sobre los seis partidos con línea:
+    # el modelo propio se desvía 5.7 puntos de media y hasta 11.9. Sus
+    # "ventajas" de 8-11 puntos en partidos sin línea son 1.3-1.7 sigmas de
+    # su propio ruido — para separarlas del error haría falta un umbral de
+    # ~13 puntos, y ahí no aparece nada. El modelo se sigue calculando y
+    # guardando como escudo contra pagar de más en las copias, pero no abre
+    # posiciones por su cuenta.
+    solo_linea_sharp: true
     # Fútbol con línea sharp: se comparan estas ligas contra los mercados
     # "Will X win?" de Polymarket. En fútbol NO hay modelo propio de
     # respaldo: sin línea no se opina (el empate rompe las heurísticas).
