@@ -261,3 +261,73 @@ def test_el_cache_ahorra_creditos():
     for _ in range(5):
         asyncio.run(c.lineas("soccer_epl"))
     assert http.llamadas == 1
+
+
+# --- Colisión de nombres entre ligas ----------------------------------------
+
+def test_no_empareja_equipos_de_ligas_distintas(tmp_path):
+    """El fallo del 2026-08-27, y el más caro de la sesión porque apuntaba a
+    un negocio que no existía.
+
+    El emparejamiento indexaba por `apodo`, que se queda con la última
+    palabra. Hanshin Tigers (Japón), Kia Tigers (Corea) y Detroit Tigers
+    (MLB) son todos 'tigers'; Yomiuri, Lotte y San Francisco Giants son
+    todos 'giants'. El bot cruzó la línea de «Yomiuri Giants @ Hanshin
+    Tigers» con un mercado de los Kia Tigers y sacó una ventaja de +5.3%
+    inventada.
+
+    Los 6 despegues de 8%+ que encontró en 2.353 comparaciones estaban TODOS
+    en KBO y NPB — exactamente donde chocan los nombres."""
+    import asyncio
+
+    # Línea japonesa: Yomiuri Giants visitando a Hanshin Tigers.
+    linea = Linea("Hanshin Tigers", "Yomiuri Giants", 0.75, _dentro_de(5))
+    odds = Odds({"baseball_npb": [linea]})
+    est, conn, broker = armar(
+        tmp_path, odds, {"0xk-0": 0.40, "0xk-1": 0.55},
+        [{"clave": "baseball_npb", "tag": "baseball"}])
+    # Mercado COREANO: otros Tigers, otros Giants.
+    mercado(conn, "0xk", "Lotte Giants vs. Kia Tigers",
+            ["Lotte Giants", "Kia Tigers"])
+
+    asyncio.run(est.scan_and_execute())
+    assert broker.ordenes == [], "cruzó dos ligas distintas"
+
+
+def test_si_empareja_el_partido_correcto(tmp_path):
+    """La corrección no puede cerrarlo todo: el mercado de verdad sí entra."""
+    import asyncio
+
+    linea = Linea("Kia Tigers", "Lotte Giants", 0.75, _dentro_de(5))
+    odds = Odds({"baseball_kbo": [linea]})
+    est, conn, broker = armar(
+        tmp_path, odds, {"0xk-0": 0.20, "0xk-1": 0.55},
+        [{"clave": "baseball_kbo", "tag": "baseball"}])
+    mercado(conn, "0xk", "Lotte Giants vs. Kia Tigers",
+            ["Lotte Giants", "Kia Tigers"])
+
+    asyncio.run(est.scan_and_execute())
+    assert broker.ordenes, "el partido correcto tenía que emparejar"
+    assert broker.ordenes[0][0] == "Kia Tigers"
+
+
+def test_dos_ligas_a_la_vez_no_se_contaminan(tmp_path):
+    """Con mercados de las dos ligas en la base, cada línea tiene que ir a
+    su partido. Es el caso real: Polymarket lista KBO y NPB bajo el mismo
+    tag 'baseball'."""
+    import asyncio
+
+    linea = Linea("Hanshin Tigers", "Yomiuri Giants", 0.75, _dentro_de(5))
+    odds = Odds({"baseball_npb": [linea]})
+    est, conn, broker = armar(
+        tmp_path, odds,
+        {"0xk-0": 0.40, "0xk-1": 0.55, "0xj-0": 0.20, "0xj-1": 0.55},
+        [{"clave": "baseball_npb", "tag": "baseball"}])
+    mercado(conn, "0xk", "Lotte Giants vs. Kia Tigers",
+            ["Lotte Giants", "Kia Tigers"])
+    mercado(conn, "0xj", "Yomiuri Giants vs. Hanshin Tigers",
+            ["Yomiuri Giants", "Hanshin Tigers"])
+
+    asyncio.run(est.scan_and_execute())
+    assert broker.ordenes, "el partido japonés tenía que emparejar"
+    assert broker.ordenes[0][0] == "Hanshin Tigers"

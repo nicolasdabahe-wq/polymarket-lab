@@ -421,11 +421,23 @@ class SportsValueStrategy:
             self._nota(f"{clave}: la casa no tiene partidos ahora")
             return []
         await self._refrescar_tag(tag)
+        from ..data.odds import nombre_coincide
+
         filas = self.conn.execute(
             """SELECT * FROM markets WHERE active = 1 AND category = 'sports'
                AND question LIKE '%vs%'""").fetchall()
-        # Índice por pareja de participantes: un mercado por partido.
-        por_pareja: dict[frozenset, sqlite3.Row] = {}
+        # Candidatos: mercados de ganador de partido, sin indexar por apodo.
+        #
+        # Indexarlos por `frozenset((apodo(a), apodo(b)))` fue un error caro:
+        # `apodo` se queda con la última palabra, y en béisbol asiático eso
+        # choca de frente. Hanshin Tigers (Japón), Kia Tigers (Corea) y
+        # Detroit Tigers (MLB) son todos 'tigers'; Yomiuri, Lotte y San
+        # Francisco Giants son todos 'giants'. El 2026-08-27 el bot emparejó
+        # la línea de «Yomiuri Giants @ Hanshin Tigers» con un mercado de los
+        # Kia Tigers y sacó de ahí una ventaja de +5.3% que no existía. Todos
+        # los "despegues" que encontró estaban en KBO y NPB, que es justo
+        # donde chocan los nombres.
+        candidatos: list[sqlite3.Row] = []
         for fila in filas:
             try:
                 salidas = _json.loads(
@@ -433,9 +445,8 @@ class SportsValueStrategy:
                     or "[]")
             except (ValueError, TypeError):
                 salidas = []
-            par = leer_partido(fila["question"], salidas or None)
-            if par:
-                por_pareja.setdefault(frozenset(par), fila)
+            if leer_partido(fila["question"], salidas or None):
+                candidatos.append(fila)
         hechas: list[str] = []
         emparejados = 0
         for linea in lineas:
@@ -446,10 +457,15 @@ class SportsValueStrategy:
                 continue
             if inicio - ahora < timedelta(minutes=self.minutos_antes):
                 continue
-            local, visitante = apodo(linea.local), apodo(linea.visitante)
-            fila = por_pareja.get(frozenset((local, visitante)))
+            # Los DOS nombres completos tienen que aparecer en la
+            # pregunta, no solo su última palabra.
+            fila = next(
+                (f for f in candidatos
+                 if nombre_coincide(linea.local, f["question"])
+                 and nombre_coincide(linea.visitante, f["question"])), None)
             if fila is None:
                 continue
+            local, visitante = apodo(linea.local), apodo(linea.visitante)
             emparejados += 1
             desc = await self._apostar_vs(
                 fila, {local: linea.prob_local,
